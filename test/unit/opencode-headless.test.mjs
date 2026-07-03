@@ -124,7 +124,7 @@ test("buildHeadlessArgs: sessionId appends --session <id> (never --continue); ab
   assert.ok(!buildHeadlessArgs({ role: "delegate" }).includes("--session"));
 });
 
-test("buildHeadlessArgs: cwd appends --dir <cwd> (cursor --workspace analog); absent/blank → no --dir", () => {
+test("buildHeadlessArgs: cwd appends --dir <cwd>; absent/blank → no --dir", () => {
   const args = buildHeadlessArgs({ role: "delegate", cwd: "C:/work/proj" });
   assert.equal(args[args.indexOf("--dir") + 1], "C:/work/proj");
   assert.ok(!buildHeadlessArgs({ role: "delegate" }).includes("--dir"), "no --dir when cwd omitted");

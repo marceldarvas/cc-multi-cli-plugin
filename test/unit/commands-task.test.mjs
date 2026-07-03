@@ -114,7 +114,7 @@ test("buildAutonomousRawOutput error footer honors a custom cliLabel", () => {
   assert.match(opencode, /OpenCode returned an error/);
 });
 
-// ── evaluateAutonomousStop (shared codex/cursor stop ladder) ───────────────────
+// ── evaluateAutonomousStop (shared stop ladder across all CLI dispatchers) ────
 
 test("evaluateAutonomousStop: non-autonomous run always stops after one turn", () => {
   assert.equal(
@@ -204,7 +204,6 @@ test("buildTaskRunMetadata detects the stop-gate review marker when not resuming
 
 test("buildTaskRunMetadata labels titles per cli", () => {
   assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "codex" }).title, "Codex Task");
-  assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "cursor" }).title, "Cursor Task");
   assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "antigravity" }).title, "Antigravity Task");
   assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "opencode" }).title, "OpenCode Task");
 });
@@ -214,7 +213,7 @@ test("buildTaskRunMetadata labels an OpenCode resume", () => {
   assert.equal(meta.title, "OpenCode Resume");
 });
 
-// ── OpenCode dispatch: --until-done gating mirrors the cursor branch ────────────
+// ── OpenCode dispatch: --until-done gating for read-only roles ──────────────────
 // The opencode branch computes `untilDone = requestedUntilDone && !isReadOnlyRole`,
 // so a delegate (write) role keeps --until-done while a read-only research/explore
 // role is forced to a single turn. Exercise the exact predicate the branch uses.

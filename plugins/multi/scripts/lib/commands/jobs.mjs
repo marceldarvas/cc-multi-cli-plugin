@@ -1,7 +1,6 @@
 import process from "node:process";
 
 import { interruptAppServerTurn } from "../adapters/codex.mjs";
-import * as cursor from "../adapters/cursor.mjs";
 import * as antigravity from "../adapters/antigravity.mjs";
 import * as opencode from "../adapters/opencode.mjs";
 import { terminateProcessTree } from "../process.mjs";
@@ -158,14 +157,9 @@ export async function handleCancel(argv) {
 
   // Per-CLI turn interrupt. The authoritative cancel for every CLI is the
   // process-tree kill below; this step is the CLI's best-effort in-flight
-  // interrupt (codex app-server turn interrupt; cursor/antigravity = process-tree).
+  // interrupt (codex app-server turn interrupt; others = process-tree).
   let interrupt = { attempted: false, interrupted: false };
-  if (cli === "cursor") {
-    interrupt = await cursor.adapter.cancel(job.id);
-    if (interrupt.attempted) {
-      appendLogLine(job.logFile, `Cursor cancel requested (${interrupt.transport ?? "process-tree"}).`);
-    }
-  } else if (cli === "antigravity") {
+  if (cli === "antigravity") {
     interrupt = await antigravity.adapter.cancel(job.id);
     if (interrupt.attempted) {
       appendLogLine(job.logFile, `Antigravity cancel requested (${interrupt.transport ?? "process-tree"}).`);

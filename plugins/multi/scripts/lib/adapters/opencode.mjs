@@ -7,8 +7,7 @@
  * and parse the newline-delimited JSON (NDJSON) it streams. The earlier "non-TTY
  * hang" scare is a powershell `Start-Process -RedirectStandardOutput`/`> file`
  * artifact; a pipe (what node child_process gives us) works — exit 0, valid
- * NDJSON in a few seconds. This is the cursor transport with a different binary
- * and event schema.
+ * NDJSON in a few seconds.
  *
  * NDJSON event types (one JSON object per line, `sessionID` on every line):
  *   - step_start                         → a turn step began
@@ -22,7 +21,7 @@
  * shell metacharacters never need cmd.exe quoting. On win32 the npm binary
  * resolves to `opencode.cmd`, which process.mjs routes through cmd.exe;
  * quoteWindowsShellArg THROWS on any newline-containing arg — so the prompt MUST
- * go on stdin, exactly like cursor.mjs.
+ * go on stdin (not as a CLI arg) to avoid shell quoting issues.
  *
  * Roles map to flags + a spawn-env permission floor (OpenCode has NO --read-only
  * flag, and `--agent <subagent>` silently falls back to the full-write `build`
@@ -116,7 +115,7 @@ function isResearchRole(role) {
 
 /**
  * OpenCode has only `--format default | json`; json is NDJSON and serves both
- * read-only and write roles (there is no stream-json distinction like cursor's),
+ * read-only and write roles,
  * so the format is "json" for every role.
  */
 export function headlessOutputFormat(_role) {
@@ -138,7 +137,7 @@ export function readOnlyAgentName(role) {
 export function buildHeadlessArgs({ role = "delegate", model, sessionId, cwd } = {}) {
   const args = ["run", "--format", headlessOutputFormat(role), "--model", resolveModel(model)];
   if (cwd && String(cwd).trim()) {
-    // Pin OpenCode's working directory (cursor's --workspace analog). NOTE: when
+    // Pin OpenCode's working directory. NOTE: when
     // cwd is INSIDE a git repo, OpenCode resolves writes to the repo ROOT (its
     // project model) regardless of --dir; --dir is honored verbatim for non-git
     // targets. Live-verified on 1.15.13.

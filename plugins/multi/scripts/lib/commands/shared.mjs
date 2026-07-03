@@ -137,7 +137,7 @@ export async function resolveLatestTrackedTaskThread(cwd, options = {}) {
   }
 
   // The on-disk fallback scans codex app-server threads, so only use it for the
-  // codex (or unscoped) path — a cursor resume must not pick up a codex thread.
+  // codex (or unscoped) path — headless CLIs keep their own session state.
   if (!options.cli || options.cli === "codex") {
     return findLatestTaskThread(workspaceRoot);
   }

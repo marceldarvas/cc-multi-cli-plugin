@@ -22,10 +22,9 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   const config = getConfig(workspaceRoot);
 
   // Per-CLI detection via each adapter's isAvailable(). Reflects the live
-  // provider set (codex, cursor, antigravity); drives the report's CLI list so
-  // it never drifts from the ADAPTERS registry. Cursor/Antigravity detection is
-  // best-effort and must never throw — guard each probe.
-  const cliOrder = ["codex", "cursor", "antigravity"];
+  // provider set; drives the report's CLI list so it never drifts from the
+  // ADAPTERS registry. Detection is best-effort and must never throw — guard each probe.
+  const cliOrder = ["codex", "antigravity"];
   const clis = cliOrder.map((name) => {
     // ADAPTERS[name] is the adapter module namespace; its `.adapter` object
     // carries the uniform isAvailable() probe (same shape dispatch uses).
