@@ -7,6 +7,7 @@ import process from "node:process";
 import { normalizeReasoningEffort, normalizeRequestedModel } from "../task-options.mjs";
 import { firstMeaningfulLine, shorten } from "../text.mjs";
 import * as antigravity from "../adapters/antigravity.mjs";
+import * as cline from "../adapters/cline.mjs";
 import * as opencode from "../adapters/opencode.mjs";
 import { getAdapter } from "../adapters/registry.mjs";
 import {
@@ -315,6 +316,61 @@ export async function executeTaskRun(request) {
     return {
       exitStatus,
       threadId: result.sessionId ?? null,
+      turnId: null,
+      payload,
+      rendered,
+      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+      jobTitle: taskMetadata.title,
+      jobClass: "task",
+      write: false
+    };
+  }
+
+  // ── Cline dispatch path ─────────────────────────────────────────────────────
+  // When --cli cline is used, invoke Cline's headless review mode (`cline --json`)
+  // via the adapter. Cline is read-only and single-shot: no sessions, no writes,
+  // no autonomous loop. --until-done and --resume-last are unsupported.
+  if (cli === "cline") {
+    if (request.untilDone) throw new Error("Cline is read-only single-shot; --until-done is unsupported.");
+    if (request.resumeLast) throw new Error("Cline has no sessions; --resume-last is unsupported.");
+
+    const clineAvail = cline.adapter.isAvailable();
+    if (!clineAvail.available) {
+      throw new Error(`Cline is not available: ${clineAvail.detail}`);
+    }
+
+    if (!request.prompt) {
+      throw new Error("Provide a prompt for Cline review tasks.");
+    }
+
+    const prompt = request.prompt.trim() || "";
+
+    const result = await cline.adapter.invoke(workspaceRoot, prompt, {
+      model: request.model ?? undefined,
+      timeoutSec: request.timeoutSec,
+      env: request.env
+    });
+
+    const rawOutput = typeof result.text === "string" ? result.text : "";
+    const failureMessage = formatAdapterError(result.error);
+    const exitStatus = 0;
+
+    const rendered = renderTaskResult(
+      { rawOutput, failureMessage, reasoningSummary: [] },
+      { title: taskMetadata.title, jobId: request.jobId ?? null, write: false }
+    );
+
+    const payload = {
+      status: exitStatus,
+      threadId: null,
+      rawOutput,
+      touchedFiles: [],
+      reasoningSummary: []
+    };
+
+    return {
+      exitStatus,
+      threadId: null,
       turnId: null,
       payload,
       rendered,

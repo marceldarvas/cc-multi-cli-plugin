@@ -10,6 +10,7 @@ import {
   buildTaskRunMetadata,
   computeTaskFingerprint,
   evaluateAutonomousStop,
+  executeTaskRun,
   findActiveDuplicateBackgroundTask,
   getTaskDedupWindowMs,
   normalizeMaxTurns
@@ -407,4 +408,21 @@ test("findActiveDuplicateBackgroundTask matches active same-fingerprint jobs in 
     fs.rmSync(pluginData, { recursive: true, force: true });
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   }
+});
+
+// ── Cline dispatch: read-only guard rejections ────────────────────────────────
+// These guards fire synchronously before any spawn, so no cline binary is needed.
+
+test("executeTaskRun rejects --until-done for cline", async () => {
+  await assert.rejects(
+    executeTaskRun({ cli: "cline", untilDone: true, prompt: "x", cwd: os.tmpdir() }),
+    /--until-done/
+  );
+});
+
+test("executeTaskRun rejects --resume-last for cline", async () => {
+  await assert.rejects(
+    executeTaskRun({ cli: "cline", resumeLast: true, prompt: "x", cwd: os.tmpdir() }),
+    /--resume-last/
+  );
 });
