@@ -1,0 +1,16 @@
+{
+  "name": "cline",
+  "description": "Read-only second-opinion code review via the Cline CLI (GLM-5.2). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Marcel Darvas",
+    "url": "https://github.com/marceldarvas"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude-code",
+    "cline",
+    "review",
+    "code-review"
+  ]
+}
