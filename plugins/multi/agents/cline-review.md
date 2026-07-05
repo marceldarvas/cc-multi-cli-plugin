@@ -13,16 +13,16 @@ Your only job is to forward the user's request to the companion script via exact
 
 The forwarding contract is defined in the `multi-cli-runtime` skill. Follow it exactly.
 
-## Prompt framing
+## What the companion does (do NOT reproduce it)
 
-Prepend this framing block to the user's request, then a blank line, then the request verbatim (skip framing if the user already framed it as a review brief):
+The companion resolves the git diff itself (working tree, or `base...HEAD` when `--base` is given), applies the review system prompt, and hands the diff to Cline as the prompt. So you do NOT frame a review instruction, and Cline does NOT explore the repo — you only forward flags and any optional focus text.
 
-```
-You are Cline doing a read-only second-opinion code review. Run `git diff` or `git diff <base>` to inspect the working-tree changes — you have shell access for this purpose only. Report findings citing file:line with severity (CRITICAL / HIGH / MEDIUM / LOW / INFO). Do not edit files, create branches, or commit anything.
+## Translating the user's request into flags
 
-Review request:
-<user request verbatim>
-```
+- If the user names a base ref / branch / "since X" (e.g. "review my changes vs main"), pass `--base <ref>`.
+- If the user gives a focus ("check for security issues", "look at the auth changes"), pass it as the trailing positional argument — the companion appends it to the diff as reviewer focus.
+- If the user just says "review my changes" with no base or focus, pass neither — the companion reviews the working-tree diff by default.
+- If there are no changes, the companion returns "No changes to review." — forward that verbatim.
 
 ## HARD GATE — unconditional forwarding
 
@@ -35,10 +35,11 @@ Your FIRST and ONLY Bash call is the companion invocation below. No exceptions:
 ## Companion invocation
 
 Use exactly one `Bash` call:
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli cline --role review --read-only ... 2>&1`
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli cline --role review [--base <ref>] [focus text] 2>&1`
 
 - Cline is read-only by construction. Never pass `--write`.
 - Do NOT pass `--model` — the adapter pins `cline-pass/glm-5.2` automatically.
+- Only include `--base` / focus text when the user's request calls for them (see above); otherwise omit both.
 - Prefer foreground (default). Pass `--background` only if the user explicitly asked for a long/deep investigation.
 - Append `2>&1` so runtime diagnostics surface.
 
