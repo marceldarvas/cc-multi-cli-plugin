@@ -8,6 +8,7 @@ import { normalizeReasoningEffort, normalizeRequestedModel } from "../task-optio
 import { firstMeaningfulLine, shorten } from "../text.mjs";
 import * as antigravity from "../adapters/antigravity.mjs";
 import * as cline from "../adapters/cline.mjs";
+import { resolveDiff, NotAGitRepoError, NoCommitsError, BaseRefNotFoundError, NoMergeBaseError } from "../adapters/cline-diff.mjs";
 import * as opencode from "../adapters/opencode.mjs";
 import { getAdapter } from "../adapters/registry.mjs";
 import {
@@ -327,9 +328,10 @@ export async function executeTaskRun(request) {
   }
 
   // ── Cline dispatch path ─────────────────────────────────────────────────────
-  // When --cli cline is used, invoke Cline's headless review mode (`cline --json`)
-  // via the adapter. Cline is read-only and single-shot: no sessions, no writes,
-  // no autonomous loop. --until-done and --resume-last are unsupported.
+  // Resolves the git diff for the workspace and feeds it as the prompt to Cline's
+  // headless review mode (`cline -p --json`). Read-only and single-shot: no
+  // sessions, no writes, no autonomous loop. --until-done and --resume-last are
+  // unsupported. A prompt/focus text is optional and appended after the diff.
   if (cli === "cline") {
     if (request.untilDone) throw new Error("Cline is read-only single-shot; --until-done is unsupported.");
     if (request.resumeLast) throw new Error("Cline has no sessions; --resume-last is unsupported.");
@@ -339,13 +341,43 @@ export async function executeTaskRun(request) {
       throw new Error(`Cline is not available: ${clineAvail.detail}`);
     }
 
-    if (!request.prompt) {
-      throw new Error("Provide a prompt for Cline review tasks.");
+    // Resolve the diff to review.
+    let diffResult;
+    try {
+      diffResult = resolveDiff({ cwd: workspaceRoot, base: request.base ?? undefined });
+    } catch (e) {
+      if (e instanceof NotAGitRepoError) throw new Error("Cline review needs a git repository.");
+      if (e instanceof NoCommitsError) throw new Error("Cline review needs at least one commit.");
+      if (e instanceof BaseRefNotFoundError) throw new Error(`Cline review base ref not found: ${request.base}`);
+      if (e instanceof NoMergeBaseError) throw new Error(`Cline review: no common history with base ${request.base}.`);
+      throw e;
     }
 
-    const prompt = request.prompt.trim() || "";
+    // Empty diff: return a clean result without spawning cline.
+    if (diffResult.isEmpty) {
+      const rawOutput = `No changes to review${request.base ? ` since ${request.base}` : ""}.`;
+      const exitStatus = 0;
+      const rendered = renderTaskResult(
+        { rawOutput, failureMessage: "", reasoningSummary: [] },
+        { title: taskMetadata.title, jobId: request.jobId ?? null, write: false }
+      );
+      const payload = { status: exitStatus, threadId: null, rawOutput, touchedFiles: [], reasoningSummary: [] };
+      return {
+        exitStatus,
+        threadId: null,
+        turnId: null,
+        payload,
+        rendered,
+        summary: rawOutput,
+        jobTitle: taskMetadata.title,
+        jobClass: "task",
+        write: false
+      };
+    }
 
-    const result = await cline.adapter.invoke(workspaceRoot, prompt, {
+    const reviewPrompt = cline.buildReviewPrompt(diffResult.diff, { focus: request.prompt });
+
+    const result = await cline.adapter.invoke(workspaceRoot, reviewPrompt, {
       model: request.model ?? undefined,
       timeoutSec: request.timeoutSec,
       env: request.env
@@ -637,7 +669,7 @@ function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex") {
   return job;
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli, role, untilDone, maxTurns }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli, role, untilDone, maxTurns, base, scope }) {
   return {
     cwd,
     model,
@@ -649,7 +681,9 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId
     cli: cli ?? "codex",
     role: role ?? null,
     untilDone: Boolean(untilDone),
-    maxTurns: maxTurns ?? null
+    maxTurns: maxTurns ?? null,
+    base: base ?? null,
+    scope: scope ?? null
   };
 }
 
@@ -719,7 +753,7 @@ function enqueueBackgroundTask(cwd, job, request, options = {}) {
 
 export async function handleTask(argv, context = {}) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file", "role", "max-turns"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "role", "max-turns", "base", "scope"],
     booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background", "read-only", "until-done"],
     aliasMap: {
       m: "model"
@@ -765,7 +799,7 @@ export async function handleTask(argv, context = {}) {
         throw new Error(`${cli} CLI is not available: ${avail.detail}`);
       }
     }
-    requireTaskRequest(prompt, resumeLast);
+    if (cli !== "cline") requireTaskRequest(prompt, resumeLast);
 
     const probeRequest = buildTaskRequest({
       cwd,
@@ -778,7 +812,9 @@ export async function handleTask(argv, context = {}) {
       cli,
       role: options.role ?? null,
       untilDone,
-      maxTurns
+      maxTurns,
+      base: options.base ?? null,
+      scope: options.scope ?? null
     });
     const fingerprint = computeTaskFingerprint(probeRequest);
     const dedupWindowMs = getTaskDedupWindowMs();
@@ -810,6 +846,8 @@ export async function handleTask(argv, context = {}) {
     return;
   }
 
+  if (cli !== "cline") requireTaskRequest(prompt, resumeLast);
+
   const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
   await runForegroundCommand(
     job,
@@ -826,7 +864,9 @@ export async function handleTask(argv, context = {}) {
         cli,
         role: options.role ?? null,
         untilDone,
-        maxTurns
+        maxTurns,
+        base: options.base ?? null,
+        scope: options.scope ?? null
       }),
     { json: options.json }
   );
