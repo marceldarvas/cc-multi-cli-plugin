@@ -26,3 +26,16 @@ export function firstMeaningfulLine(text, fallback) {
     .find(Boolean);
   return line ?? fallback;
 }
+
+/**
+ * Codepoint-safe truncation to a byte budget. Never splits a multibyte UTF-8
+ * sequence mid-codepoint. Returns { text, truncated, origBytes }.
+ */
+export function truncateUtf8(str, maxBytes) {
+  const buf = Buffer.from(str, 'utf8');
+  if (buf.length <= maxBytes) return { text: str, truncated: false, origBytes: buf.length };
+  let end = maxBytes;
+  // UTF-8 continuation bytes match 0b10xxxxxx; back off until we're at a lead byte.
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return { text: buf.subarray(0, end).toString('utf8'), truncated: true, origBytes: buf.length };
+}
