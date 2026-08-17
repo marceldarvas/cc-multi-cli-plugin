@@ -21,6 +21,12 @@
 
 - **ACP cancel dispatch now reports `transport: "process-tree"` when there is no in-flight ACP turn in the calling process** (the cross-process cancel case — the mechanism that actually does the work is the companion's process-tree kill; the ACP child sits inside the worker's tree). Previously it reported `"acp"` while doing nothing in-process, which was dishonest and also made the suite sensitive to ambient `MULTI_TRANSPORT_*` env (3 pre-existing headless cancel tests failed when the dogfood flags were set session-wide). `transport: "acp"` is now reported only when a live in-flight handle was actually cancelled in-protocol. Suite verified green both with and without the ambient flags.
 
+## 0.1.3 — 2026-08-17
+
+### Fixed
+
+- **Cline review no longer burns its timeout and returns nothing.** The adapter now tells Cline to review only the supplied diff (no tools, one message), treats a run as success only when `finishReason === "completed"` and the review text is non-empty (so salvaged aborted narration is a loud failure, not a silent success), and gives `runCline` its own watchdog slightly above `-t`. `terminateProcessTree` falls back to the bare pid when `kill(-pid)` returns `ESRCH`, so a non-detached child is actually killed. Untracked files are folded into one temp-index `git diff HEAD` via `git rev-parse --git-path index` (linked-worktree safe) instead of one `git diff --no-index` per file.
+
 ## 0.1.2 — 2026-06-11
 
 ### Added

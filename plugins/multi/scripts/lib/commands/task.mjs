@@ -328,10 +328,11 @@ export async function executeTaskRun(request) {
   }
 
   // ── Cline dispatch path ─────────────────────────────────────────────────────
-  // Resolves the git diff for the workspace and feeds it as the prompt to Cline's
-  // headless review mode (`cline -p --json`). Read-only and single-shot: no
-  // sessions, no writes, no autonomous loop. --until-done and --resume-last are
-  // unsupported. A prompt/focus text is optional and appended after the diff.
+  // Resolves the git diff for the workspace and feeds it as the prompt to Cline
+  // in plan mode (`cline -p --json`). `-p` is --plan, not print; it is what
+  // keeps the run read-only. Single-shot: no sessions, no writes, no autonomous
+  // loop. --until-done and --resume-last are unsupported. A prompt/focus text is
+  // optional and appended after the diff.
   if (cli === "cline") {
     if (request.untilDone) throw new Error("Cline is read-only single-shot; --until-done is unsupported.");
     if (request.resumeLast) throw new Error("Cline has no sessions; --resume-last is unsupported.");
@@ -385,7 +386,8 @@ export async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    const exitStatus = 0;
+    const completed = result.finishReason === "completed" && rawOutput.trim().length > 0;
+    const exitStatus = completed ? 0 : 1;
 
     const rendered = renderTaskResult(
       { rawOutput, failureMessage, reasoningSummary: [] },
@@ -397,7 +399,9 @@ export async function executeTaskRun(request) {
       threadId: null,
       rawOutput,
       touchedFiles: [],
-      reasoningSummary: []
+      reasoningSummary: [],
+      finishReason: result.finishReason ?? null,
+      partial: Boolean(result.partial)
     };
 
     return {
