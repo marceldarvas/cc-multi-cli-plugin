@@ -1,6 +1,7 @@
 /**
  * Cline adapter — availability checks, auth status, and running prompts
- * through Cline's headless review mode (`cline --json`).
+ * through Cline plan mode (`cline -p --json`). `-p` is --plan: it is what
+ * keeps Cline from writing files. Do not drop it.
  *
  * Maps cline-plugin-cc's JSONL output (via parseReview) into the shared
  * { text, error, partial, finishReason } adapter contract.  Owns error
@@ -9,7 +10,7 @@
  * timeout.
  */
 
-import { binaryAvailable, spawnCommand } from "../process.mjs";
+import { binaryAvailable, spawnCommand, terminateProcessTree } from "../process.mjs";
 import { parseReview, ReviewParseError, EmptyReviewError, ReviewTimeoutError } from "./cline-parse.mjs";
 import { truncateUtf8 } from "../text.mjs";
 
@@ -73,7 +74,8 @@ function lastRunResult(stdout) {
 const DEFAULT_MODEL = process.env.CLINE_CLI_DEFAULT_MODEL || "cline-pass/glm-5.2";
 const DEFAULT_PROVIDER = process.env.CLINE_CLI_DEFAULT_PROVIDER || "cline-pass";
 const DEFAULT_TIMEOUT = Number(process.env.CLINE_TIMEOUT_SECS || 300);
-const SYSTEM = "You are a code reviewer. Focus on correctness, security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
+const WATCHDOG_SLACK_SECS = 10;
+const SYSTEM = "You are a code reviewer. Review ONLY the diff given in the user message. Do NOT use any tools, do NOT read files, do NOT explore the repository — everything you need is in the diff. Respond with your complete review in a single message and then stop immediately. Focus on correctness, security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
 
 export function buildArgs({ cwd, prompt, model, provider, system, timeoutSec }) {
   return [
@@ -93,20 +95,45 @@ export const adapter = {
   isAuthenticated: async (_cwd) => ({ authenticated: true, method: "lazy", detail: "auth surfaces on first invoke" }),
   invoke: async (cwd, prompt, options = {}) => {
     const args = buildArgs({ cwd, prompt, model: options.model, provider: options.provider, system: options.system, timeoutSec: options.timeoutSec });
-    const { stdout, stderr, code } = await runCline(cwd, args, options.env);
+    const { stdout, stderr, code, timedOut, watchdogMs } = await runCline(cwd, args, options.env, options);
+    if (timedOut) {
+      return errResult("ClineTimeout", `Cline exceeded adapter watchdog (${watchdogMs}ms)`, 1);
+    }
     return normalizeClineResult(stdout, stderr, code);
   },
   cancel: async (_jobId) => ({ attempted: true, interrupted: false, transport: "process-tree", detail: "companion kills the job PID tree" }),
   getSession: undefined,
 };
 
-function runCline(cwd, args, env) {
+function runCline(cwd, args, env, options = {}) {
+  const timeoutSec = options.timeoutSec || DEFAULT_TIMEOUT;
+  const slackSec = Number.isFinite(options.watchdogSlackSec) ? options.watchdogSlackSec : WATCHDOG_SLACK_SECS;
+  const watchdogMs = (timeoutSec + slackSec) * 1000;
   return new Promise((resolve) => {
-    const child = spawnCommand("cline", args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnCommand("cline", args, {
+      cwd,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+      windowsHide: true
+    });
     let stdout = "", stderr = "";
+    let timedOut = false;
     child.stdout.on("data", (d) => { stdout += d; });
     child.stderr.on("data", (d) => { stderr += d; });
-    child.on("close", (code) => resolve({ stdout, stderr, code: code ?? 0 }));
-    child.on("error", (e) => resolve({ stdout, stderr: stderr + String(e), code: 127 }));
+    const watchdog = setTimeout(() => {
+      timedOut = true;
+      if (Number.isFinite(child.pid)) {
+        try { terminateProcessTree(child.pid); } catch { /* best-effort */ }
+      }
+    }, watchdogMs);
+    child.on("close", (code) => {
+      clearTimeout(watchdog);
+      resolve({ stdout, stderr, code: code ?? 0, timedOut, watchdogMs });
+    });
+    child.on("error", (e) => {
+      clearTimeout(watchdog);
+      resolve({ stdout, stderr: stderr + String(e), code: 127, timedOut, watchdogMs });
+    });
   });
 }

@@ -15,16 +15,21 @@ test("cline review of a real diff returns findings, no mutations", { skip: !proc
   const git = (a) => execSync(`git ${a}`, { cwd: dir });
   git("init -q");
   writeFileSync(join(dir, "math.js"), "export function add(a,b){return a-b}\n");
+  writeFileSync(join(dir, "auth.js"), "export function check(tok){return Boolean(tok)}\n");
+  writeFileSync(join(dir, "settings.json"), "{\"debug\":true}\n");
   git("add -A");
   git('-c commit.gpgsign=false commit -qm base');
   writeFileSync(join(dir, "math.js"), "export function add(a,b){return a-b}\nexport function div(a,b){return a/b}\n");
+  writeFileSync(join(dir, "auth.js"), "export function check(tok){return true}\n");
+  writeFileSync(join(dir, "settings.json"), "{\"debug\":true,\"token\":\"hardcoded\"}\n");
 
   const result = await executeTaskRun({ cli: "cline", role: "review", cwd: dir });
 
   assert.equal(result.exitStatus, 0);
+  assert.equal(result.payload?.finishReason, "completed");
   const review = result.payload?.rawOutput ?? "";
   assert.ok(review.trim().length > 0, "review must be non-empty");
   const status = execSync("git status --porcelain --untracked-files=all", { cwd: dir }).toString();
-  // Only math.js (our own edit) may be dirty; cline must not add/commit anything.
+  // Only our own edits may be dirty; cline must not add/commit anything.
   assert.doesNotMatch(status, /PWNED|\?\?/, `cline must not create files, got:\n${status}`);
 });

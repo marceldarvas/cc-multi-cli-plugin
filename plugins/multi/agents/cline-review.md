@@ -34,7 +34,7 @@ Your FIRST and ONLY Bash call is the companion invocation below. No exceptions:
 
 ## Companion invocation
 
-Use exactly one `Bash` call:
+Use exactly one `Bash` call, with `timeout: 600000` so the forwarder outlives Cline's 300s `-t` and the adapter watchdog:
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli cline --role review [--base <ref>] [focus text] 2>&1`
 
 - Cline is read-only by construction. Never pass `--write`.

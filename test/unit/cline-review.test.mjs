@@ -2,7 +2,7 @@
 // ABOUTME: Covers empty-diff short-circuit, error propagation, and buildReviewPrompt behaviour.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -145,4 +145,78 @@ test("executeTaskRun cline: --resume-last throws", async () => {
     () => executeTaskRun({ cli: "cline", cwd: process.cwd(), resumeLast: true }),
     /--resume-last is unsupported/
   );
+});
+
+function withFakeCline(script, fn) {
+  const dir = mkdtempSync(join(tmpdir(), "fake-cline-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const path = join(bin, "cline");
+  writeFileSync(path, `#!/bin/sh\n${script}\n`);
+  chmodSync(path, 0o755);
+  const previous = process.env.PATH;
+  process.env.PATH = `${bin}:${previous}`;
+  return fn().finally(() => {
+    process.env.PATH = previous;
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
+function dirtyRepo() {
+  const dir = repo();
+  commit(dir, "a.js", "const x = 1;\n");
+  writeFileSync(join(dir, "a.js"), "const x = 2;\n");
+  return dir;
+}
+
+test("executeTaskRun cline: aborted finishReason with salvaged text is a non-zero failure", async () => {
+  const dir = dirtyRepo();
+  try {
+    const result = await withFakeCline(
+      `if [ "$1" = "--version" ]; then echo "cline 3.0.55"; exit 0; fi
+printf '%s\\n' '{"type":"agent_event","event":{"type":"content_start","contentType":"text","text":"Let me read the truncated middle section of settings.json"}}'
+printf '%s\\n' '{"type":"run_result","finishReason":"aborted","text":""}'`,
+      () => executeTaskRun({ cli: "cline", cwd: dir, role: "review" })
+    );
+    assert.notEqual(result.exitStatus, 0);
+    assert.notEqual(result.payload.status, 0);
+    assert.equal(result.payload.finishReason, "aborted");
+    assert.equal(result.payload.partial, true);
+    assert.match(result.payload.rawOutput, /Let me read/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("executeTaskRun cline: empty review text is a non-zero failure", async () => {
+  const dir = dirtyRepo();
+  try {
+    const result = await withFakeCline(
+      `if [ "$1" = "--version" ]; then echo "cline 3.0.55"; exit 0; fi
+printf '%s\\n' '{"type":"run_result","finishReason":"completed","text":""}'`,
+      () => executeTaskRun({ cli: "cline", cwd: dir, role: "review" })
+    );
+    assert.notEqual(result.exitStatus, 0);
+    assert.notEqual(result.payload.status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("executeTaskRun cline: completed non-empty review stays exit 0 and records finishReason", async () => {
+  const dir = dirtyRepo();
+  try {
+    const result = await withFakeCline(
+      `if [ "$1" = "--version" ]; then echo "cline 3.0.55"; exit 0; fi
+printf '%s\\n' '{"type":"run_result","finishReason":"completed","text":"## High\\n- a.js:1 subtraction bug"}'`,
+      () => executeTaskRun({ cli: "cline", cwd: dir, role: "review" })
+    );
+    assert.equal(result.exitStatus, 0);
+    assert.equal(result.payload.status, 0);
+    assert.equal(result.payload.finishReason, "completed");
+    assert.equal(result.payload.partial, false);
+    assert.match(result.payload.rawOutput, /subtraction bug/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

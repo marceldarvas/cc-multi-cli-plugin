@@ -122,19 +122,18 @@ export function terminateProcessTree(pid, options = {}) {
     killImpl(-pid, "SIGTERM");
     return { attempted: true, delivered: true, method: "process-group" };
   } catch (error) {
-    if (error?.code !== "ESRCH") {
-      try {
-        killImpl(pid, "SIGTERM");
-        return { attempted: true, delivered: true, method: "process" };
-      } catch (innerError) {
-        if (innerError?.code === "ESRCH") {
-          return { attempted: true, delivered: false, method: "process" };
-        }
-        throw innerError;
+    // ESRCH on the negative pid is the non-detached-child case: there is no
+    // process group with that id, but the bare pid may still be alive.
+    // Any other group-kill error is also worth a bare-pid attempt.
+    try {
+      killImpl(pid, "SIGTERM");
+      return { attempted: true, delivered: true, method: "process" };
+    } catch (innerError) {
+      if (innerError?.code === "ESRCH") {
+        return { attempted: true, delivered: false, method: "process" };
       }
+      throw innerError;
     }
-
-    return { attempted: true, delivered: false, method: "process-group" };
   }
 }
 

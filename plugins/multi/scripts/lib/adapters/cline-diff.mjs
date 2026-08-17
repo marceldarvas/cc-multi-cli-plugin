@@ -1,5 +1,8 @@
 // ABOUTME: Resolves the diff to review — uncommitted (incl. untracked) or a branch vs a base ref.
 // ABOUTME: Returns { diff, filesChanged, isEmpty } and throws typed errors for git edge cases.
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { git } from './cline-git.mjs';
 
 export class NotAGitRepoError extends Error { constructor(m = 'Not inside a git work tree') { super(m); this.name = 'NotAGitRepoError'; } }
@@ -12,18 +15,25 @@ function assertRepo(cwd) {
   if (r.code !== 0 || r.stdout.trim() !== 'true') throw new NotAGitRepoError();
 }
 
-function untrackedDiff(cwd) {
-  // NUL-delimited so spaces/newlines in names are safe.
-  const listed = git(['ls-files', '--others', '--exclude-standard', '-z'], cwd);
-  const files = listed.stdout.split('\0').filter(Boolean);
-  let out = '';
-  for (const f of files) {
-    // --no-index exits 1 when a diff exists; only >1 is a real error.
-    const d = git(['diff', '--no-index', '--', '/dev/null', f], cwd);
-    if (d.code > 1) continue; // unreadable/binary edge: skip rather than fail
-    out += d.stdout;
+function workingTreeDiff(cwd) {
+  const indexResult = git(['rev-parse', '--git-path', 'index'], cwd);
+  if (indexResult.code !== 0 || !indexResult.stdout.trim()) {
+    throw new Error(indexResult.stderr.trim() || 'could not resolve git index path');
   }
-  return out;
+  const indexPath = indexResult.stdout.trim();
+  const tmpDir = mkdtempSync(join(tmpdir(), 'cline-idx-'));
+  const tmpIndex = join(tmpDir, 'index');
+  try {
+    copyFileSync(indexPath, tmpIndex);
+    const env = { GIT_INDEX_FILE: tmpIndex };
+    const added = git(['add', '-N', '--', '.'], cwd, env);
+    if (added.code !== 0) {
+      throw new Error(added.stderr.trim() || `git add -N failed (${added.code})`);
+    }
+    return git(['diff', 'HEAD'], cwd, env).stdout;
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 export function resolveDiff({ cwd, base }) {
@@ -36,7 +46,7 @@ export function resolveDiff({ cwd, base }) {
     if (git(['merge-base', base, 'HEAD'], cwd).code !== 0) throw new NoMergeBaseError(base);
     diff = git(['diff', `${base}...HEAD`], cwd).stdout;
   } else {
-    diff = git(['diff', 'HEAD'], cwd).stdout + untrackedDiff(cwd);
+    diff = workingTreeDiff(cwd);
   }
 
   const filesChanged = [...diff.matchAll(/^\+\+\+ (?:b\/)?(.+)$/gm)].map((m) => m[1]).filter((f) => f !== '/dev/null');
