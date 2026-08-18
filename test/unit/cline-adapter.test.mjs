@@ -37,7 +37,7 @@ test("buildArgs keeps -p (plan mode) so Cline cannot write files, and omits --au
   assert.ok(a.includes("-p"), "should include -p (plan mode; dropping it puts Cline in act mode)");
   assert.ok(a.includes("--json"), "should include --json");
   assert.ok(!a.includes("--auto-approve"), "should NOT include --auto-approve");
-  assert.equal(a[a.indexOf("-m") + 1], "cline-pass/glm-5.2");
+  assert.equal(a[a.indexOf("-m") + 1], "cline-pass/deepseek-v4-flash");
   assert.equal(a[a.indexOf("-P") + 1], "cline-pass");
   assert.equal(a[a.length - 1], "review"); // prompt is last positional
 });

@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Antigravity, and OpenCode CLIs from Claude Code.",
-    "version": "0.1.4"
+    "version": "0.1.5"
   },
   "plugins": [
     {
       "name": "multi",
       "description": "Hub — companion runtime, subagents, setup wizard, customization skills. Install first.",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "author": {
         "name": "greenpolo"
       },
@@ -47,8 +47,8 @@
     },
     {
       "name": "cline",
-      "description": "Adds /cline:review (read-only second-opinion code review; GLM-5.2 via the Cline CLI). Requires multi.",
-      "version": "0.1.1",
+      "description": "Adds /cline:review (read-only second-opinion code review; DeepSeek-V4-Flash via the Cline CLI). Requires multi.",
+      "version": "0.1.2",
       "author": {
         "name": "Marcel Darvas"
       },

@@ -21,6 +21,13 @@
 
 - **ACP cancel dispatch now reports `transport: "process-tree"` when there is no in-flight ACP turn in the calling process** (the cross-process cancel case — the mechanism that actually does the work is the companion's process-tree kill; the ACP child sits inside the worker's tree). Previously it reported `"acp"` while doing nothing in-process, which was dishonest and also made the suite sensitive to ambient `MULTI_TRANSPORT_*` env (3 pre-existing headless cancel tests failed when the dogfood flags were set session-wide). `transport: "acp"` is now reported only when a live in-flight handle was actually cancelled in-protocol. Suite verified green both with and without the ambient flags.
 
+## 0.1.5 — 2026-08-18
+
+### Changed
+
+- **`/cline:review` now runs on `cline-pass/deepseek-v4-flash` instead of `cline-pass/glm-5.2`.** Measured across all 12 `cline-pass` models on two diffs. On a real 31 KB diff glm-5.2 **aborted at the 300 s timeout with zero output** — reproducibly, and at every `--thinking` level (none/low/high), so it is not an under-thinking problem. deepseek-v4-flash completed the same diff in 67 s and was the only model to lead with a genuine bug the others missed. On a 4 KB diff carrying nine planted defects it scored 9/9 with **zero false positives**; it and kimi-k2.6 were the only models to manage that, and kimi-k2.6 also aborted on the 31 KB diff. Override with `CLINE_CLI_DEFAULT_MODEL` as before.
+- `--thinking` is deliberately **not** passed to the CLI: it made the chosen model 50% slower for slightly less output and rescued no failing model within the timeout budget.
+
 ## 0.1.4 — 2026-08-18
 
 ### Fixed
