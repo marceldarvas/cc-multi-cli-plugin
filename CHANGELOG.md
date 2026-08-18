@@ -21,6 +21,12 @@
 
 - **ACP cancel dispatch now reports `transport: "process-tree"` when there is no in-flight ACP turn in the calling process** (the cross-process cancel case — the mechanism that actually does the work is the companion's process-tree kill; the ACP child sits inside the worker's tree). Previously it reported `"acp"` while doing nothing in-process, which was dishonest and also made the suite sensitive to ambient `MULTI_TRANSPORT_*` env (3 pre-existing headless cancel tests failed when the dogfood flags were set session-wide). `transport: "acp"` is now reported only when a live in-flight handle was actually cancelled in-protocol. Suite verified green both with and without the ambient flags.
 
+## 0.1.4 — 2026-08-18
+
+### Fixed
+
+- **A working-tree review no longer depends on the companion's own working directory, and no longer misses a same-tick edit.** 0.1.3 located the index with `git rev-parse --git-path index` and copied it, which broke twice: git reports that path relative to wherever it ran (`.git/index` at the top level, `../.git/index` below it), so `copyFileSync` resolved it against the node process's cwd and threw `ENOENT` for any review launched from a subdirectory; and the copy's fresh mtime defeated git's racily-clean check, so an edit landing in the same clock tick as the last index write read as clean and the review reported "no changes" (measured ~1 in 200). The scratch index is now built from HEAD with `git read-tree` — no path to resolve and no stat cache to go stale. Output is byte-identical and the real index and working tree are still untouched.
+
 ## 0.1.3 — 2026-08-17
 
 ### Fixed

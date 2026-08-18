@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Antigravity, and OpenCode CLIs from Claude Code.",
-    "version": "0.1.3"
+    "version": "0.1.4"
   },
   "plugins": [
     {
       "name": "multi",
       "description": "Hub — companion runtime, subagents, setup wizard, customization skills. Install first.",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "author": {
         "name": "greenpolo"
       },
