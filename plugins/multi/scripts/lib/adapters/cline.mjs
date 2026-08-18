@@ -71,7 +71,7 @@ function lastRunResult(stdout) {
   return null;
 }
 
-const DEFAULT_MODEL = process.env.CLINE_CLI_DEFAULT_MODEL || "cline-pass/glm-5.2";
+const DEFAULT_MODEL = process.env.CLINE_CLI_DEFAULT_MODEL || "cline-pass/deepseek-v4-flash";
 const DEFAULT_PROVIDER = process.env.CLINE_CLI_DEFAULT_PROVIDER || "cline-pass";
 const DEFAULT_TIMEOUT = Number(process.env.CLINE_TIMEOUT_SECS || 300);
 const WATCHDOG_SLACK_SECS = 10;

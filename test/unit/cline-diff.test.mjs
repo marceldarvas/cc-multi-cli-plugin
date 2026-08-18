@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { git } from '../../plugins/multi/scripts/lib/adapters/cline-git.mjs';
@@ -91,7 +92,7 @@ test('temp-index path leaves the real index and working tree untouched', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('linked worktree resolves the index via git-path, not .git/index', () => {
+test('linked worktree, which has no .git/index, diffs without touching its index', () => {
   const dir = repo();
   commit(dir, 'a.js', 'x\n');
   const wt = mkdtempSync(join(tmpdir(), 'clr-wt-'));
@@ -115,13 +116,54 @@ test('linked worktree resolves the index via git-path, not .git/index', () => {
   }
 });
 
-test('resolveDiff uses a temp GIT_INDEX_FILE via git-path index, not per-file --no-index', () => {
+test('resolves the index path independently of the process cwd', () => {
+  // `git rev-parse --git-path index` answers relative to the directory git ran
+  // in (".git/index" at the top level, "../.git/index" below it), so anything
+  // resolving it against the node process cwd reads the wrong index or none.
+  // Runs in a child process so the review never depends on our own cwd.
+  const dir = repo();
+  commit(dir, 'a.js', 'x\n');
+  writeFileSync(join(dir, 'a.js'), 'y\n');
+  writeFileSync(join(dir, 'untracked.js'), 'const n = 1;\n');
+  const elsewhere = mkdtempSync(join(tmpdir(), 'clr-cwd-'));
+  const mod = pathToFileURL(fileURLToPath(new URL('../../plugins/multi/scripts/lib/adapters/cline-diff.mjs', import.meta.url))).href;
+  try {
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { resolveDiff } from ${JSON.stringify(mod)};\n` +
+      `process.stdout.write(JSON.stringify(resolveDiff({ cwd: ${JSON.stringify(dir)} })));`],
+      { cwd: elsewhere, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const { diff } = JSON.parse(r.stdout);
+    assert.match(diff, /a\.js/);
+    assert.match(diff, /untracked\.js/);
+  } finally {
+    rmSync(elsewhere, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveDiff builds a temp GIT_INDEX_FILE from HEAD, never copying the real index', () => {
   const src = readFileSync(fileURLToPath(new URL('../../plugins/multi/scripts/lib/adapters/cline-diff.mjs', import.meta.url)), 'utf8');
-  assert.match(src, /--git-path/);
   assert.match(src, /GIT_INDEX_FILE/);
+  assert.match(src, /read-tree/);
   assert.match(src, /add['"\s,]+-N/);
   assert.doesNotMatch(src, /function untrackedDiff/);
   assert.doesNotMatch(src, /--no-index/);
+  assert.doesNotMatch(src, /copyFileSync/, 'copying the real index reintroduces its stale stat cache');
+});
+
+test('detects an edit made in the same clock tick as the commit', () => {
+  // A copied index carries stat data git trusts, so a same-size edit landing in
+  // the same tick as the last index write used to read as clean (~1 in 200).
+  for (let i = 0; i < 25; i++) {
+    const dir = repo();
+    commit(dir, 'a.js', 'const x = 1;\n');
+    writeFileSync(join(dir, 'a.js'), 'const x = 2;\n'); // same size, no delay
+    const { diff, isEmpty } = resolveDiff({ cwd: dir });
+    assert.equal(isEmpty, false, `missed the edit on iteration ${i}`);
+    assert.match(diff, /const x = 2/);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('temp-index still surfaces a rename, a symlink, a binary file, and a no-trailing-newline file', () => {

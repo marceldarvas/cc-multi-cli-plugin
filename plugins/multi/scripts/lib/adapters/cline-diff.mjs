@@ -1,6 +1,6 @@
 // ABOUTME: Resolves the diff to review — uncommitted (incl. untracked) or a branch vs a base ref.
 // ABOUTME: Returns { diff, filesChanged, isEmpty } and throws typed errors for git edge cases.
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { git } from './cline-git.mjs';
@@ -15,17 +15,19 @@ function assertRepo(cwd) {
   if (r.code !== 0 || r.stdout.trim() !== 'true') throw new NotAGitRepoError();
 }
 
+// Diffs the working tree, untracked files included, without touching the real
+// index. The scratch index is built from HEAD rather than copied from the repo:
+// a copy would have to be located (git reports the index path relative to
+// wherever it ran) and would carry stat data that makes git trust its cache, so
+// an edit landing in the same clock tick as the last index write reads as clean.
 function workingTreeDiff(cwd) {
-  const indexResult = git(['rev-parse', '--git-path', 'index'], cwd);
-  if (indexResult.code !== 0 || !indexResult.stdout.trim()) {
-    throw new Error(indexResult.stderr.trim() || 'could not resolve git index path');
-  }
-  const indexPath = indexResult.stdout.trim();
   const tmpDir = mkdtempSync(join(tmpdir(), 'cline-idx-'));
-  const tmpIndex = join(tmpDir, 'index');
+  const env = { GIT_INDEX_FILE: join(tmpDir, 'index') };
   try {
-    copyFileSync(indexPath, tmpIndex);
-    const env = { GIT_INDEX_FILE: tmpIndex };
+    const readTree = git(['read-tree', 'HEAD'], cwd, env);
+    if (readTree.code !== 0) {
+      throw new Error(readTree.stderr.trim() || `git read-tree failed (${readTree.code})`);
+    }
     const added = git(['add', '-N', '--', '.'], cwd, env);
     if (added.code !== 0) {
       throw new Error(added.stderr.trim() || `git add -N failed (${added.code})`);
