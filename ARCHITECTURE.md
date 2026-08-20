@@ -24,9 +24,10 @@ lib/adapters/codex.mjs (adapter.invoke)      adapter speaks the CLI's native pro
 app-server broker  ──►  codex app-server  ──►  Codex model
 ```
 
-The same chain holds for `cursor` (headless `agent -p`), `antigravity` (headless
-`agy -p`), and `opencode` (headless `opencode run --format json`), just with a
-different adapter and transport.
+The same chain holds for `antigravity` (headless `agy -p`), `opencode`
+(headless `opencode run --format json`), and `cline` (`cline -p --json`
+review), just with a different adapter and transport. This fork has no
+Cursor CLI adapter.
 
 ## Companion subcommands
 
@@ -39,12 +40,12 @@ different adapter and transport.
 | `status` / `result` / `cancel` | Inspect / fetch / stop background jobs. |
 | `setup` | Toggle the stop-review gate and other config. |
 
-Global: `--cli <codex|cursor|antigravity|opencode>` (default `codex`), `--cwd`/`-C <dir>`.
+Global: `--cli <codex|antigravity|opencode|cline>` (default `codex`), `--cwd`/`-C <dir>`.
 
 ## Adapter registry
 
 `multi-cli-companion.mjs` imports the four adapter modules and registers them by
-name (`{ codex, cursor, antigravity, opencode }`). `getAdapter(name)` throws a clear
+name (`{ codex, antigravity, opencode, cline }`). `getAdapter(name)` throws a clear
 error for unknown names. Each module exports an `adapter` object — see `CONTRACT.md`.
 Adding a CLI = add a conforming adapter module + register it in `registry.mjs`; the
 conformance test (`test/unit/adapter-contract.test.mjs`) enforces the shape.
@@ -88,10 +89,11 @@ with no in-flight turn and no activity for `CODEX_COMPANION_BROKER_IDLE_MS`
 ## Transports at a glance
 
 - **Codex** — App Server Protocol via the broker daemon (`lib/app-server.mjs`).
-- **Cursor** — headless print mode (`lib/adapters/cursor.mjs`), spawning `agent -p`
-  with the prompt on stdin and parsing `json`/`stream-json` output. On Windows,
-  Cursor's shell tool is slow/unreliable (host-PATH/WSL), so `/cursor:delegate`
-  defers build/test verification to the caller.
+- **Cline** — review-only plan mode (`lib/adapters/cline.mjs`), spawning
+  `cline -p --json` with the companion-resolved git diff as the prompt. `-p` is
+  `--plan` and is what keeps Cline from writing files. Default model
+  `cline-pass/glm-5.2`. This fork has no Cursor CLI transport; leftover
+  `resolveCursorAcp` helpers in `lib/acp/resolve.mjs` are unused shared code.
 - **Antigravity** — headless `agy -p` (`lib/adapters/antigravity.mjs`). `agy`'s
   headless stdout is empty upstream (gemini-cli#27466), so the adapter learns the
   conversation id from a per-invocation `--log-file` and recovers the answer from
