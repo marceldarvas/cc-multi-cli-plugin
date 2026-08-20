@@ -6,6 +6,7 @@ import process from "node:process";
 
 import { normalizeReasoningEffort, normalizeRequestedModel } from "../task-options.mjs";
 import { firstMeaningfulLine, shorten } from "../text.mjs";
+import * as cursor from "../adapters/cursor.mjs";
 import * as antigravity from "../adapters/antigravity.mjs";
 import * as cline from "../adapters/cline.mjs";
 import { resolveDiff, NotAGitRepoError, NoCommitsError, BaseRefNotFoundError, NoMergeBaseError } from "../adapters/cline-diff.mjs";
@@ -51,7 +52,7 @@ const STOP_REVIEW_TASK_MARKER = "Run a stop-gate review of the previous Claude t
 // When --until-done is set, the companion loops resume turns on the same session
 // until the model emits PLAN_COMPLETE_SENTINEL on its own line, hits an error,
 // runs out of turns, or makes no progress on a follow-up turn. Supported for the
-// codex (app-server thread) and other headless CLIs.
+// codex (app-server thread), cursor (headless --resume), and other headless CLIs.
 const PLAN_COMPLETE_SENTINEL = "PLAN COMPLETE";
 const PLAN_COMPLETE_PATTERN = /^\s*PLAN\s+COMPLETE\s*$/im;
 const DEFAULT_MAX_TURNS = 30;
@@ -121,6 +122,152 @@ export async function executeTaskRun(request) {
     resumeLast: request.resumeLast,
     cli
   });
+
+  // ── Cursor dispatch path ────────────────────────────────────────────────────
+  // When --cli cursor is used, invoke Cursor headless print mode (`agent -p`)
+  // via the adapter. The role (delegate/research/explore) is forwarded so the
+  // adapter can pick the right --mode/flags. Supports --until-done by looping
+  // headless --resume turns on the returned session_id, sharing the autonomous
+  // stop logic with the codex path via evaluateAutonomousStop().
+  if (cli === "cursor") {
+    const cursorAvail = cursor.adapter.isAvailable();
+    if (!cursorAvail.available) {
+      throw new Error(`Cursor agent CLI is not available: ${cursorAvail.detail ?? "agent not found"}. Install Cursor from https://cursor.com or set CURSOR_AGENT_PATH.`);
+    }
+
+    // Resume the latest Cursor session for this repo when asked (cli-scoped so a
+    // codex thread is never resumed as a cursor session).
+    let resumeSessionId = null;
+    if (request.resumeLast) {
+      const latestThread = await resolveLatestTrackedTaskThread(workspaceRoot, {
+        excludeJobId: request.jobId,
+        cli: "cursor"
+      });
+      if (!latestThread) {
+        throw new Error("No previous Cursor task session was found for this repository.");
+      }
+      resumeSessionId = latestThread.id;
+    }
+
+    if (!request.prompt && !resumeSessionId) {
+      throw new Error("Provide a prompt for Cursor tasks, or use --resume-last.");
+    }
+
+    // Read-only roles (research/explore) are single-turn: they use json output
+    // with no per-turn events, so an autonomous loop has nothing to gauge progress
+    // on and would self-stop as "no-progress" on turn 2. Restrict --until-done to
+    // write roles (delegate).
+    const untilDone = Boolean(request.untilDone) && !cursor.isReadOnlyRole(request.role);
+    const maxTurns = untilDone ? Math.max(1, request.maxTurns ?? DEFAULT_MAX_TURNS) : 1;
+    const initialPrompt = untilDone && request.prompt
+      ? buildAutonomousInitialPrompt(request.prompt)
+      : (request.prompt?.trim() || (resumeSessionId ? DEFAULT_CONTINUE_PROMPT : ""));
+
+    const streamForwarder = request.onProgress
+      ? (event) => {
+          // Only phase events reach the user; message_chunk (token-granular) is
+          // dropped as noise. The adapter emits a phase per tool-call start so
+          // the user sees "things happening".
+          if (event.type === "phase") {
+            request.onProgress({ message: event.message, phase: event.message });
+          }
+        }
+      : undefined;
+
+    let lastResult = null;
+    let sessionId = resumeSessionId;
+    const aggregatedTurnMessages = [];
+    const aggregatedTouchedFiles = new Set();
+    let stopReason = null;
+    let turnCount = 0;
+
+    while (turnCount < maxTurns) {
+      const isFirstTurn = turnCount === 0;
+      const turnPrompt = isFirstTurn ? initialPrompt : AUTONOMOUS_CONTINUATION_PROMPT;
+      const turnResumeId = isFirstTurn ? resumeSessionId : sessionId;
+
+      if (untilDone && !isFirstTurn && request.onProgress) {
+        request.onProgress({
+          message: `Autonomous turn ${turnCount + 1} of ${maxTurns}: resuming session ${sessionId}.`,
+          phase: "starting"
+        });
+      }
+
+      const turnResult = await cursor.adapter.invoke(workspaceRoot, turnPrompt, {
+        model: request.model ?? undefined,
+        role: request.role ?? "delegate",
+        write: Boolean(request.write),
+        sessionId: turnResumeId,
+        onStream: streamForwarder
+      });
+
+      turnCount += 1;
+      lastResult = turnResult;
+      sessionId = turnResult.sessionId ?? sessionId;
+      for (const fc of turnResult.fileChanges ?? []) {
+        if (fc?.path) aggregatedTouchedFiles.add(fc.path);
+      }
+      const finalMessage = typeof turnResult.text === "string" ? turnResult.text : "";
+      aggregatedTurnMessages.push({ turn: turnCount, message: finalMessage, status: turnResult.status });
+
+      stopReason = evaluateAutonomousStop(
+        {
+          status: turnResult.status,
+          finalMessage,
+          fileChanges: turnResult.fileChanges,
+          commandExecutions: turnResult.commandExecutions
+        },
+        { untilDone, turnCount, maxTurns }
+      );
+      if (stopReason) break;
+    }
+
+    const rawOutput = untilDone
+      ? buildAutonomousRawOutput(aggregatedTurnMessages, { stopReason, turnCount, maxTurns, cliLabel: "Cursor" })
+      : (typeof lastResult?.text === "string" ? lastResult.text : "");
+    const failureMessage = formatAdapterError(lastResult?.error);
+    const touchedFiles = untilDone
+      ? [...aggregatedTouchedFiles]
+      : ((lastResult?.fileChanges ?? []).map((fc) => fc.path));
+    // Surface in-protocol errors via the rendered failure message, not a non-zero
+    // exit code — a non-zero exit trips the forwarding subagent's "if Bash fails,
+    // return nothing" rule and silently swallows the result.
+    const exitStatus = 0;
+
+    const rendered = renderTaskResult(
+      {
+        rawOutput,
+        failureMessage,
+        reasoningSummary: []
+      },
+      {
+        title: taskMetadata.title,
+        jobId: request.jobId ?? null,
+        write: Boolean(request.write)
+      }
+    );
+
+    const payload = {
+      status: exitStatus,
+      threadId: sessionId ?? null,
+      rawOutput,
+      touchedFiles,
+      reasoningSummary: [],
+      ...(untilDone ? { autonomous: { turns: turnCount, stopReason, maxTurns } } : {})
+    };
+
+    return {
+      exitStatus,
+      threadId: sessionId ?? null,
+      turnId: null,
+      payload,
+      rendered,
+      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+      jobTitle: taskMetadata.title,
+      jobClass: "task",
+      write: Boolean(request.write)
+    };
+  }
 
   // ── OpenCode dispatch path ──────────────────────────────────────────────────
   // When --cli opencode is used, invoke OpenCode's headless run mode
@@ -591,8 +738,10 @@ export function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex"
     };
   }
 
-  const cliLabel = cli === "antigravity" ? "Antigravity"
+  const cliLabel = cli === "cursor" ? "Cursor"
+                 : cli === "antigravity" ? "Antigravity"
                  : cli === "opencode" ? "OpenCode"
+                 : cli === "cline" ? "Cline"
                  : "Codex";
   const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
