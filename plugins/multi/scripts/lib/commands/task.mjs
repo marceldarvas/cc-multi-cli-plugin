@@ -337,12 +337,8 @@ export async function executeTaskRun(request) {
     if (request.untilDone) throw new Error("Cline is read-only single-shot; --until-done is unsupported.");
     if (request.resumeLast) throw new Error("Cline has no sessions; --resume-last is unsupported.");
 
-    const clineAvail = cline.adapter.isAvailable();
-    if (!clineAvail.available) {
-      throw new Error(`Cline is not available: ${clineAvail.detail}`);
-    }
-
-    // Resolve the diff to review.
+    // Resolve the diff to review. Git/empty-diff outcomes do not need the
+    // Cline binary — Cloud Agents and `npm test` have no CLIs on PATH.
     let diffResult;
     try {
       diffResult = resolveDiff({ cwd: workspaceRoot, base: request.base ?? undefined });
@@ -374,6 +370,11 @@ export async function executeTaskRun(request) {
         jobClass: "task",
         write: false
       };
+    }
+
+    const clineAvail = cline.adapter.isAvailable();
+    if (!clineAvail.available) {
+      throw new Error(`Cline is not available: ${clineAvail.detail}`);
     }
 
     const reviewPrompt = cline.buildReviewPrompt(diffResult.diff, { focus: request.prompt });
