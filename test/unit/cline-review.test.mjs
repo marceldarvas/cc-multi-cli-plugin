@@ -2,7 +2,7 @@
 // ABOUTME: Covers empty-diff short-circuit, error propagation, and buildReviewPrompt behaviour.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,6 +168,28 @@ function dirtyRepo() {
   writeFileSync(join(dir, "a.js"), "const x = 2;\n");
   return dir;
 }
+
+function pathWithoutCline() {
+  return (process.env.PATH || "")
+    .split(":")
+    .filter((dir) => dir && !existsSync(join(dir, "cline")))
+    .join(":");
+}
+
+test("executeTaskRun cline: dirty repo without cline on PATH throws not available", async () => {
+  const dir = dirtyRepo();
+  const previous = process.env.PATH;
+  process.env.PATH = pathWithoutCline();
+  try {
+    await assert.rejects(
+      () => executeTaskRun({ cli: "cline", cwd: dir, role: "review" }),
+      /Cline is not available/i
+    );
+  } finally {
+    process.env.PATH = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("executeTaskRun cline: aborted finishReason with salvaged text is a non-zero failure", async () => {
   const dir = dirtyRepo();
