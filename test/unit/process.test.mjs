@@ -28,6 +28,26 @@ test("ESRCH on process-group kill falls back to the bare pid", () => {
   ]);
 });
 
+test("non-ESRCH group-kill error still falls back to the bare pid", () => {
+  const eperm = new Error("Operation not permitted");
+  eperm.code = "EPERM";
+  const calls = [];
+  const killImpl = (pid, signal) => {
+    calls.push({ pid, signal });
+    if (pid < 0) throw eperm;
+  };
+
+  const result = terminateProcessTree(4242, { platform: "darwin", killImpl });
+
+  assert.equal(result.delivered, true);
+  assert.equal(result.method, "process");
+  assert.deepEqual(calls, [
+    { pid: -4242, signal: "SIGTERM" },
+    { pid: 4242, signal: "SIGTERM" },
+    { pid: 4242, signal: "SIGKILL" }
+  ]);
+});
+
 test("process-group SIGTERM is followed by SIGKILL", () => {
   const calls = [];
   const killImpl = (pid, signal) => {
