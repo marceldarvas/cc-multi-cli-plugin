@@ -21,6 +21,13 @@
 
 - **ACP cancel dispatch now reports `transport: "process-tree"` when there is no in-flight ACP turn in the calling process** (the cross-process cancel case — the mechanism that actually does the work is the companion's process-tree kill; the ACP child sits inside the worker's tree). Previously it reported `"acp"` while doing nothing in-process, which was dishonest and also made the suite sensitive to ambient `MULTI_TRANSPORT_*` env (3 pre-existing headless cancel tests failed when the dogfood flags were set session-wide). `transport: "acp"` is now reported only when a live in-flight handle was actually cancelled in-protocol. Suite verified green both with and without the ambient flags.
 
+## 0.1.6 — 2026-09-01
+
+### Fixed
+
+- **`timeoutSec: 0` is no longer treated as "use the 300s default".** `buildArgs` and `runCline` used `timeoutSec || DEFAULT_TIMEOUT`, so an explicit zero became a 300-second Cline `-t` and watchdog. Finite values, including 0, now win.
+- **Process-tree kill escalates to SIGKILL.** `terminateProcessTree` only sent SIGTERM, which a wedged Cline (and any other adapter child) can ignore, so the watchdog could report a kill it did not finish. After SIGTERM on the process group (or the bare pid on ESRCH), it now sends SIGKILL.
+
 ## 0.1.5 — 2026-08-18
 
 ### Changed
