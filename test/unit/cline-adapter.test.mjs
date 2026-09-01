@@ -77,6 +77,32 @@ test("normalizeClineResult does NOT short-circuit when stdout has content and co
   assert.match(r.error.message, /some error text/);
 });
 
+test("buildArgs keeps timeoutSec 0 instead of substituting the default", () => {
+  const a = buildArgs({ cwd: "/repo", prompt: "review", timeoutSec: 0 });
+  assert.equal(a[a.indexOf("-t") + 1], "0");
+});
+
+test("timeoutSec 0 is a real watchdog bound, not the 300s default", { timeout: 8000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cline-t0-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "cline"), "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo cline; exit 0; fi\nsleep 30\n");
+  chmodSync(join(bin, "cline"), 0o755);
+  const previous = process.env.PATH;
+  process.env.PATH = `${bin}:${previous}`;
+  const started = Date.now();
+  try {
+    const result = await adapter.invoke(dir, "review", { timeoutSec: 0, watchdogSlackSec: 0 });
+    const elapsed = Date.now() - started;
+    assert.ok(result.error, "timeoutSec 0 must still fire the watchdog");
+    assert.equal(result.error.class, "ClineTimeout");
+    assert.ok(elapsed < 3000, `watchdog with timeoutSec 0 should fire immediately, took ${elapsed}ms`);
+  } finally {
+    process.env.PATH = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("runCline watchdog kills a hung child and returns a timeout error", { timeout: 10000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "cline-hang-"));
   const bin = join(dir, "bin");
