@@ -118,22 +118,33 @@ export function terminateProcessTree(pid, options = {}) {
     throw new Error(formatCommandFailure(result));
   }
 
+  // A group-kill miss (ESRCH on a non-detached child, or EPERM in a sandbox)
+  // still falls through to the bare pid. Any other group-kill error is also
+  // worth a bare-pid attempt.
+  let groupTerm = false;
   try {
-    killImpl(-pid, "SIGTERM");
+    groupTerm = killBestEffort(killImpl, -pid, "SIGTERM");
+  } catch {
+    groupTerm = false;
+  }
+  if (groupTerm) {
+    killBestEffort(killImpl, -pid, "SIGKILL");
     return { attempted: true, delivered: true, method: "process-group" };
+  }
+  const processTerm = killBestEffort(killImpl, pid, "SIGTERM");
+  const processKill = killBestEffort(killImpl, pid, "SIGKILL");
+  return { attempted: true, delivered: processTerm || processKill, method: "process" };
+}
+
+function killBestEffort(killImpl, pid, signal) {
+  try {
+    killImpl(pid, signal);
+    return true;
   } catch (error) {
-    // ESRCH on the negative pid is the non-detached-child case: there is no
-    // process group with that id, but the bare pid may still be alive.
-    // Any other group-kill error is also worth a bare-pid attempt.
-    try {
-      killImpl(pid, "SIGTERM");
-      return { attempted: true, delivered: true, method: "process" };
-    } catch (innerError) {
-      if (innerError?.code === "ESRCH") {
-        return { attempted: true, delivered: false, method: "process" };
-      }
-      throw innerError;
+    if (error?.code === "ESRCH") {
+      return false;
     }
+    throw error;
   }
 }
 

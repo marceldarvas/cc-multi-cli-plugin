@@ -77,10 +77,14 @@ const DEFAULT_TIMEOUT = Number(process.env.CLINE_TIMEOUT_SECS || 300);
 const WATCHDOG_SLACK_SECS = 10;
 const SYSTEM = "You are a code reviewer. Review ONLY the diff given in the user message. Do NOT use any tools, do NOT read files, do NOT explore the repository — everything you need is in the diff. Respond with your complete review in a single message and then stop immediately. Focus on correctness, security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
 
+function resolveTimeoutSec(timeoutSec) {
+  return Number.isFinite(timeoutSec) ? timeoutSec : DEFAULT_TIMEOUT;
+}
+
 export function buildArgs({ cwd, prompt, model, provider, system, timeoutSec }) {
   return [
     "-p", "--json",
-    "-t", String(timeoutSec || DEFAULT_TIMEOUT),
+    "-t", String(resolveTimeoutSec(timeoutSec)),
     "-P", provider || DEFAULT_PROVIDER,
     "-m", model || DEFAULT_MODEL,
     "-c", cwd,
@@ -106,7 +110,7 @@ export const adapter = {
 };
 
 function runCline(cwd, args, env, options = {}) {
-  const timeoutSec = options.timeoutSec || DEFAULT_TIMEOUT;
+  const timeoutSec = resolveTimeoutSec(options.timeoutSec);
   const slackSec = Number.isFinite(options.watchdogSlackSec) ? options.watchdogSlackSec : WATCHDOG_SLACK_SECS;
   const watchdogMs = (timeoutSec + slackSec) * 1000;
   return new Promise((resolve) => {
