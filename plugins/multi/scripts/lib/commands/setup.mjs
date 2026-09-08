@@ -24,7 +24,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   // Per-CLI detection via each adapter's isAvailable(). Reflects the live
   // provider set; drives the report's CLI list so it never drifts from the
   // ADAPTERS registry. Detection is best-effort and must never throw — guard each probe.
-  const cliOrder = ["codex", "antigravity"];
+  const cliOrder = ["codex", "cursor", "antigravity", "opencode", "cline"];
   const clis = cliOrder.map((name) => {
     // ADAPTERS[name] is the adapter module namespace; its `.adapter` object
     // carries the uniform isAvailable() probe (same shape dispatch uses).
@@ -57,9 +57,21 @@ async function buildSetupReport(cwd, actionsTaken = []) {
     nextSteps.push("Run `!codex login`.");
     nextSteps.push("If browser login is blocked, retry with `!codex login --device-auth` or `!codex login --with-api-key`.");
   }
+  const cursorCli = clis.find((entry) => entry.name === "cursor");
+  if (cursorCli && !cursorCli.available) {
+    nextSteps.push("Cursor: install the `agent` CLI from https://cursor.com/install, or set CURSOR_AGENT_PATH. Adds /cursor:delegate, /cursor:research, /cursor:explore.");
+  }
   const antigravityCli = clis.find((entry) => entry.name === "antigravity");
   if (antigravityCli && !antigravityCli.available) {
     nextSteps.push("Antigravity: install the `agy` CLI (https://antigravity.google) and run `agy` once interactively to sign in. Read-only research/explore only (EXPERIMENTAL).");
+  }
+  const opencodeCli = clis.find((entry) => entry.name === "opencode");
+  if (opencodeCli && !opencodeCli.available) {
+    nextSteps.push("OpenCode: install with `npm install -g opencode-ai` or set OPENCODE_CLI_PATH.");
+  }
+  const clineCli = clis.find((entry) => entry.name === "cline");
+  if (clineCli && !clineCli.available) {
+    nextSteps.push("Cline: install the `cline` CLI (https://github.com/cline/cline) and configure the cline-pass provider. Adds /cline:review.");
   }
   if (!config.stopReviewGate) {
     nextSteps.push("Optional: run `/multi:setup --enable-review-gate` to require a fresh review before stop.");

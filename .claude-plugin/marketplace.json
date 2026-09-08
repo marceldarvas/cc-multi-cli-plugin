@@ -5,7 +5,7 @@
     "url": "https://github.com/greenpolo"
   },
   "metadata": {
-    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Antigravity, and OpenCode CLIs from Claude Code.",
+    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Cursor, Antigravity, OpenCode, and Cline CLIs from Claude Code.",
     "version": "0.1.6"
   },
   "plugins": [
@@ -26,6 +26,15 @@
         "name": "greenpolo"
       },
       "source": "./plugins/codex"
+    },
+    {
+      "name": "cursor",
+      "description": "Adds /cursor:delegate, /cursor:research, /cursor:explore. Requires multi.",
+      "version": "0.1.2",
+      "author": {
+        "name": "greenpolo"
+      },
+      "source": "./plugins/cursor"
     },
     {
       "name": "antigravity",

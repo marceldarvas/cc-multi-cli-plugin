@@ -22,7 +22,7 @@ If the user passed `--dry-run` anywhere in $ARGUMENTS, enumerate changes but mak
 
 ## Step 1 — Detect installed CLIs
 
-This plugin supports four CLIs: **Codex**, **Cursor**, **Antigravity**, and **OpenCode**.
+This plugin supports five CLIs: **Codex**, **Cursor**, **Antigravity**, **OpenCode**, and **Cline** (this fork's review-only addition).
 
 Run each probe via Bash:
 
@@ -30,6 +30,7 @@ Run each probe via Bash:
 - Cursor: the binary is named `agent` (not `cursor-agent`). Try `agent --version` first. On Windows the installer does NOT add it to PATH — always fall back to `$LOCALAPPDATA/cursor-agent/agent.cmd --version` (a.k.a. `C:/Users/<name>/AppData/Local/cursor-agent/agent.cmd`). Remember whichever path works; use it throughout the rest of setup.
 - Antigravity: the binary is `agy` (Google's Antigravity CLI). Try `agy --version`. On Windows the installer drops it at `$LOCALAPPDATA/agy/bin/agy.exe` and may not add it to PATH. The companion's setup probe (`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" setup --json`) reports whether `agy` is detected. (EXPERIMENTAL; read-only research/explore only.)
 - OpenCode: the binary is `opencode`. Try `opencode --version`. On Windows, npm installs a `.cmd` shim; a stale bun `opencode.exe` in PATH may shadow it — the adapter resolves only the `.cmd` shim, never the `.exe`. Install via `npm install -g opencode-ai`.
+- Cline: the binary is `cline`. Try `cline --version`. Adds `/cline:review` only. Install from https://github.com/cline/cline (or the Cline VS Code extension's headless CLI) and configure the `cline-pass` provider.
 
 Tabulate which succeed. For each failure, tell the user the install command:
 
@@ -37,12 +38,13 @@ Tabulate which succeed. For each failure, tell the user the install command:
 - Cursor: `curl https://cursor.com/install -fsS | bash` (Unix) or `irm 'https://cursor.com/install?win32=true' | iex` (Windows PowerShell). After install, the binary lives at `$LOCALAPPDATA/cursor-agent/agent.cmd` on Windows and is not on PATH.
 - Antigravity: install the **`agy` CLI** from https://antigravity.google, then run `agy` once interactively to sign in with your Google account. The desktop app is not required.
 - OpenCode: `npm install -g opencode-ai`.
+- Cline: install the `cline` CLI from https://github.com/cline/cline and configure `cline-pass` / `glm-5.2`.
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
 
-**No CLIs detected:** if none of Codex, Cursor, `agy`, or `opencode` is installed, ABORT setup before any further step. Do not prompt for API keys, do not install plugins, do not configure MCPs. Print:
+**No CLIs detected:** if none of Codex, Cursor, `agy`, `opencode`, or `cline` is installed, ABORT setup before any further step. Do not prompt for API keys, do not install plugins, do not configure MCPs. Print:
 
-> *"None of Codex, Cursor, Antigravity, or OpenCode is available. Install at least one (commands above) and re-run `/multi:setup`. Nothing was changed."*
+> *"None of Codex, Cursor, Antigravity, OpenCode, or Cline is available. Install at least one (commands above) and re-run `/multi:setup`. Nothing was changed."*
 
 Then exit. The wizard has no productive work without at least one CLI to configure.
 
@@ -64,6 +66,7 @@ For each detected CLI, check the current install state FIRST, then act:
    - Cursor → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:delegate`, `/cursor:research`, `/cursor:explore`)
    - Antigravity → `claude plugin install antigravity@cc-multi-cli-plugin` (adds `/antigravity:research`, `/antigravity:explore`)
    - OpenCode → `claude plugin install opencode@cc-multi-cli-plugin` (adds `/opencode:delegate`, `/opencode:research`, `/opencode:explore`)
+   - Cline → `claude plugin install cline@cc-multi-cli-plugin` (adds `/cline:review`)
 
    When announcing what each install will provide, list the actual `commands/*.md` files in that plugin directory rather than the static list above (which can drift).
 
@@ -465,7 +468,7 @@ Tracking file:
    and by future /multi:uninstall to know what to remove cleanly.)
 
 Next steps:
-  - Try `/codex:execute <task>`, `/cursor:delegate <task>`, `/antigravity:research <topic>`, or `/opencode:delegate <task>`.
+  - Try `/codex:execute <task>`, `/cursor:delegate <task>`, `/cline:review`, `/antigravity:research <topic>`, or `/opencode:delegate <task>`.
   - Re-run `/multi:setup` anytime to reconfigure (idempotent: audits + reconciles drift, skips no-ops).
 ```
 

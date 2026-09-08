@@ -5,12 +5,12 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/greenpolo/cc-multi-cli-plugin?include_prereleases&sort=semver&label=release)](https://github.com/greenpolo/cc-multi-cli-plugin/releases)
 [![Built for Claude Code](https://img.shields.io/badge/built_for-Claude_Code-d97757)](https://docs.anthropic.com/en/docs/claude-code)
-[![CLIs supported](https://img.shields.io/badge/CLIs-Codex_·_Cursor_·_Antigravity_·_OpenCode-555)](#commands)
+[![CLIs supported](https://img.shields.io/badge/CLIs-Codex_·_Cursor_·_Antigravity_·_OpenCode_·_Cline-555)](#commands)
 [![Stars](https://img.shields.io/github/stars/greenpolo/cc-multi-cli-plugin?style=social)](https://github.com/greenpolo/cc-multi-cli-plugin/stargazers)
 
-If you have access to multiple AI coding CLIs (Codex, Cursor, Antigravity, and OpenCode), this plugin lets Claude Code delegate to whichever one is best for the task — without you having to switch tools or run them yourself.
+If you have access to multiple AI coding CLIs (Codex, Cursor, Antigravity, OpenCode, and Cline), this plugin lets Claude Code delegate to whichever one is best for the task — without you having to switch tools or run them yourself.
 
-Each CLI is wired up through its native transport (Codex via ASP, Cursor via headless `agent -p`, Antigravity via its headless `agy` CLI, OpenCode via headless `opencode run --format json`). Cursor and OpenCode can also run over **ACP** (Agent Client Protocol) as an opt-in — see [Transports](#transports). This lets you pick and choose the best features from each — like `/cursor:delegate` for fast implementation, `/codex:review` for code review, `/antigravity:research` for deep research, or `/opencode:delegate` to offload implementation to OpenCode's Zen models. Sessions, streaming, tool calls, and background jobs all work normally.
+Each CLI is wired up through its native transport (Codex via ASP, Cursor via headless `agent -p`, Antigravity via its headless `agy` CLI, OpenCode via headless `opencode run --format json`). Cursor and OpenCode can also run over **ACP** (Agent Client Protocol) as an opt-in — see [Transports](#transports). This lets you pick and choose the best features from each — like `/cursor:delegate` for fast implementation, `/codex:review` or `/cline:review` for code review, `/antigravity:research` for deep research, or `/opencode:delegate` to offload implementation to OpenCode's Zen models. Sessions, streaming, tool calls, and background jobs all work normally.
 
 ## Install
 
@@ -47,6 +47,7 @@ Provider commands live under each CLI's namespace; the cross-cutting `/multi:*` 
 | `/cursor:delegate` | Delegate an implementation task or plan step to Cursor (agentic; writes code; supports `--until-done`) |
 | `/cursor:research` | Read-only external web/documentation research via Cursor |
 | `/cursor:explore` | Read-only codebase exploration via Cursor |
+| `/cline:review` | Read-only second-opinion code review via Cline (GLM-5.2; this fork) |
 | `/antigravity:research` | Deep external research with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
 | `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
 | `/opencode:delegate` | Delegate an implementation task to OpenCode (agentic; writes code; supports `--until-done`; default model: opencode/claude-opus-4-8 via Zen) |
