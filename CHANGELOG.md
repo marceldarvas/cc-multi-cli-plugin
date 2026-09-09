@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- **A malformed `CLINE_TIMEOUT_SECS` no longer disables every review.** `Number(env || 300)` yields `NaN` for a non-numeric value, which reached the CLI as `-t NaN` and made `watchdogMs` `NaN` — and `setTimeout(fn, NaN)` coerces to a 1 ms timer (measured firing at 5 ms), so a single typo in the env var killed every Cline run the instant it started, reported as a watchdog timeout. The value is validated with `Number.isFinite` before adoption; negative values fall back for the same reason. An explicit `timeoutSec: 0` from a caller is still honored as a real deadline. (`CLINE_TIMEOUT_SECS=0` was never affected — env values are strings and `"0"` is truthy.)
+
 - **ACP inactivity watchdog now covers the HANDSHAKE phase.** Previously it was first armed immediately before `session/prompt`, so a CLI that spawned and hung silently at initialize/session-new (lock, auth, network) was only caught by the 30-minute overall cap — reproduced live, then fixed: the watchdog arms at connection start and re-arms after each completed handshake step. A silent hang now errors out after `inactivityMs` (default 120 s) + the 5 s cancel grace.
 - **Mid-turn agent crash can no longer race to a success-shaped result.** A post-handshake child exit with no stopReason and no cancel now sets an explicit `crash` error (whichever of the exit handler or the SDK's connection-closed rejection wins the race), with the stderr tail as detail and partial streamed text preserved.
 

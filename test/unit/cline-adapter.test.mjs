@@ -82,6 +82,71 @@ test("buildArgs keeps timeoutSec 0 instead of substituting the default", () => {
   assert.equal(a[a.indexOf("-t") + 1], "0");
 });
 
+// The module reads CLINE_TIMEOUT_SECS once at import, so these re-import under a
+// cache-busting query to exercise the parse rather than the cached default.
+async function clineWithTimeoutEnv(value) {
+  const previous = process.env.CLINE_TIMEOUT_SECS;
+  if (value === undefined) delete process.env.CLINE_TIMEOUT_SECS;
+  else process.env.CLINE_TIMEOUT_SECS = value;
+  try {
+    return await import(
+      new URL(
+        `../../plugins/multi/scripts/lib/adapters/cline.mjs?timeout-env=${encodeURIComponent(String(value))}`,
+        import.meta.url
+      )
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CLINE_TIMEOUT_SECS;
+    else process.env.CLINE_TIMEOUT_SECS = previous;
+  }
+}
+
+test("a malformed CLINE_TIMEOUT_SECS falls back to the default instead of NaN", async () => {
+  const mod = await clineWithTimeoutEnv("abc");
+  const a = mod.buildArgs({ cwd: "/repo", prompt: "review" });
+  assert.equal(a[a.indexOf("-t") + 1], "300", "NaN would reach the CLI as -t NaN and make the watchdog fire instantly");
+});
+
+test("CLINE_TIMEOUT_SECS=0 is honored rather than swallowed by the || default", async () => {
+  const mod = await clineWithTimeoutEnv("0");
+  const a = mod.buildArgs({ cwd: "/repo", prompt: "review" });
+  assert.equal(a[a.indexOf("-t") + 1], "0");
+});
+
+test("a negative CLINE_TIMEOUT_SECS falls back rather than arming a past deadline", async () => {
+  const mod = await clineWithTimeoutEnv("-5");
+  const a = mod.buildArgs({ cwd: "/repo", prompt: "review" });
+  assert.equal(a[a.indexOf("-t") + 1], "300");
+});
+
+test("a malformed CLINE_TIMEOUT_SECS does not kill a healthy run on arrival", { timeout: 15000 }, async () => {
+  const mod = await clineWithTimeoutEnv("abc");
+  const dir = mkdtempSync(join(tmpdir(), "cline-nan-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "cline"),
+    "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo cline; exit 0; fi\nsleep 1\nprintf '%s' '{\"type\":\"run_result\",\"finishReason\":\"stop\",\"text\":\"survived\"}'\n"
+  );
+  chmodSync(join(bin, "cline"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousEnv = process.env.CLINE_TIMEOUT_SECS;
+  process.env.PATH = `${bin}:${previousPath}`;
+  process.env.CLINE_TIMEOUT_SECS = "abc";
+  try {
+    const r = await mod.adapter.invoke(dir, "review", {});
+    assert.ok(
+      !/watchdog/i.test(JSON.stringify(r)),
+      `a garbage timeout must not trip the watchdog: ${JSON.stringify(r).slice(0, 200)}`
+    );
+  } finally {
+    process.env.PATH = previousPath;
+    if (previousEnv === undefined) delete process.env.CLINE_TIMEOUT_SECS;
+    else process.env.CLINE_TIMEOUT_SECS = previousEnv;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("timeoutSec 0 is a real watchdog bound, not the 300s default", { timeout: 8000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "cline-t0-"));
   const bin = join(dir, "bin");
