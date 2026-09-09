@@ -2,6 +2,7 @@
 // ABOUTME: These actually launch a stub `agent` binary, unlike the pure-helper tests in cursor-headless.test.mjs.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +74,33 @@ test("the watchdog actually kills the child, not just the pending promise", asyn
     assert.equal(existsSync(sentinel), false, "the stub outlived the watchdog kill");
   } finally {
     rmSync(sentinelDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("the Cursor child stays in the worker's process group so cancel can reach it", async () => {
+  // jobs.mjs cancels by signalling the *worker's* process group. A detached
+  // child gets its own group and escapes that kill — which would leave a
+  // cancelled `--force --trust` Cursor writing files. Pin the invariant here:
+  // the child's pgid must match this process's.
+  const { dir, path } = stubAgent("sleep 5");
+  const cwd = mkdtempSync(join(tmpdir(), "cursor-cwd-"));
+  const selfPgid = execFileSync("ps", ["-o", "pgid=", "-p", String(process.pid)], { encoding: "utf8" }).trim();
+  let childPgid = null;
+  try {
+    await withCursorPath(path, async () => {
+      const turn = runHeadlessCursorTurn(cwd, "hello", { timeoutSec: 1, watchdogSlackSec: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const found = execFileSync("ps", ["-eo", "pid=,pgid=,command="], { encoding: "utf8" })
+        .split("\n")
+        .find((line) => line.includes(path));
+      if (found) childPgid = found.trim().split(/\s+/)[1];
+      await turn;
+    });
+    assert.notEqual(childPgid, null, "could not locate the spawned stub to read its process group");
+    assert.equal(childPgid, selfPgid, "the Cursor child must share the worker's process group");
+  } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   }

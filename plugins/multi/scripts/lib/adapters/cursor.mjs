@@ -473,7 +473,6 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
         cwd,
         env: buildSpawnEnvironment(options.env ?? process.env),
         stdio: ["pipe", "pipe", "pipe"],
-        detached: process.platform !== "win32",
         windowsHide: true
       });
     } catch (error) {
@@ -481,6 +480,15 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
       return;
     }
 
+    // Deliberately NOT spawned detached. Detaching would give the child its own
+    // process group, which the watchdog could group-kill — but the authoritative
+    // cancel (jobs.mjs) signals the *worker's* group, and a detached child is no
+    // longer in it. That would let a cancelled Cursor job keep running under
+    // --force --trust and keep writing files. Staying in the worker's group keeps
+    // cancel correct; the watchdog takes terminateProcessTree's bare-pid fallback,
+    // which kills the CLI itself. Descendants the CLI spawned are reaped by cancel,
+    // not by the watchdog — closing that gap needs the child pid tracked in job
+    // state so cancel can target it directly.
     watchdog = setTimeout(() => {
       if (Number.isFinite(child.pid)) {
         try { terminateProcessTree(child.pid); } catch { /* best-effort */ }
