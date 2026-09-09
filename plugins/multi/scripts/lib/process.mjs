@@ -14,6 +14,7 @@ export function runCommand(command, args = [], options = {}) {
     input: options.input,
     maxBuffer: options.maxBuffer,
     stdio: options.stdio ?? "pipe",
+    timeout: options.timeout,
     windowsHide: true
   };
 

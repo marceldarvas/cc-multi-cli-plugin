@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { git } from '../../plugins/multi/scripts/lib/adapters/cline-git.mjs';
 import { resolveDiff, NotAGitRepoError, BaseRefNotFoundError, NoCommitsError } from '../../plugins/multi/scripts/lib/adapters/cline-diff.mjs';
 
@@ -68,9 +67,22 @@ test('unborn branch (no commits) throws NoCommitsError', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function indexHash(dir) {
-  const indexPath = git(['rev-parse', '--git-path', 'index'], dir).stdout.trim();
-  return { indexPath, hash: createHash('sha256').update(readFileSync(indexPath)).digest('hex') };
+// What "untouched" has to mean: the staged content, not the index file's bytes.
+// A plain read-only `git diff` refreshes the index's stat cache, so the bytes
+// legitimately change while the staged tree stays identical. Asserting on the
+// bytes would fail on correct code.
+//
+// `--git-path` answers relative to the repo it was run in, so it must be
+// resolved against `dir`; resolving against process.cwd() silently inspects the
+// *outer* repo and the assertion stops testing anything.
+function indexState(dir) {
+  const raw = git(['rev-parse', '--git-path', 'index'], dir).stdout.trim();
+  const indexPath = isAbsolute(raw) ? raw : join(dir, raw);
+  return {
+    indexPath,
+    tree: git(['write-tree'], dir).stdout.trim(),
+    staged: git(['diff', '--cached', '--name-status'], dir).stdout
+  };
 }
 
 test('temp-index path leaves the real index and working tree untouched', () => {
@@ -78,17 +90,19 @@ test('temp-index path leaves the real index and working tree untouched', () => {
   commit(dir, 'a.js', 'x\n');
   writeFileSync(join(dir, 'a.js'), 'y\n');
   writeFileSync(join(dir, 'new file.js'), 'const secret = 1;\n');
-  const before = indexHash(dir);
+  const before = indexState(dir);
   const statusBefore = git(['status', '--porcelain', '--untracked-files=all'], dir).stdout;
   const { diff, isEmpty } = resolveDiff({ cwd: dir });
   assert.equal(isEmpty, false);
   assert.match(diff, /a\.js/);
   assert.match(diff, /new file\.js/);
   assert.match(diff, /const secret/);
-  const after = indexHash(dir);
+  const after = indexState(dir);
   assert.equal(after.indexPath, before.indexPath);
-  assert.equal(after.hash, before.hash);
+  assert.equal(after.tree, before.tree);
+  assert.equal(after.staged, before.staged);
   assert.equal(git(['status', '--porcelain', '--untracked-files=all'], dir).stdout, statusBefore);
+  assert.equal(readFileSync(join(dir, 'a.js'), 'utf8'), 'y\n');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -103,11 +117,12 @@ test('linked worktree, which has no .git/index, diffs without touching its index
     assert.equal(existsSync(join(wt, '.git')), true);
     assert.equal(existsSync(join(wt, '.git', 'index')), false, 'linked worktree must not have .git/index');
     writeFileSync(join(wt, 'wt-only.js'), 'export const n = 1;\n');
-    const before = indexHash(wt);
+    const before = indexState(wt);
     const { diff } = resolveDiff({ cwd: wt });
     assert.match(diff, /wt-only\.js/);
-    const after = indexHash(wt);
-    assert.equal(after.hash, before.hash);
+    const after = indexState(wt);
+    assert.equal(after.tree, before.tree);
+    assert.equal(after.staged, before.staged);
     assert.match(git(['rev-parse', '--git-path', 'index'], wt).stdout, /index/);
     assert.ok(!git(['rev-parse', '--git-path', 'index'], wt).stdout.includes(`${wt}/.git/index`));
   } finally {
@@ -174,12 +189,14 @@ test('temp-index still surfaces a rename, a symlink, a binary file, and a no-tra
   writeFileSync(join(dir, 'no-nl.txt'), 'no newline');
   writeFileSync(join(dir, 'blob.bin'), Buffer.from([0, 1, 2, 255]));
   symlinkSync('plain.txt', join(dir, 'link.txt'));
-  const before = indexHash(dir);
+  const before = indexState(dir);
   const { diff } = resolveDiff({ cwd: dir });
   assert.match(diff, /new-name\.js|old-name\.js/);
   assert.match(diff, /no-nl\.txt/);
   assert.match(diff, /blob\.bin|GIT binary patch|Binary files/);
   assert.match(diff, /link\.txt/);
-  assert.equal(indexHash(dir).hash, before.hash);
+  const after = indexState(dir);
+  assert.equal(after.tree, before.tree);
+  assert.equal(after.staged, before.staged);
   rmSync(dir, { recursive: true, force: true });
 });

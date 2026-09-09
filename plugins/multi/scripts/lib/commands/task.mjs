@@ -198,6 +198,7 @@ export async function executeTaskRun(request) {
         role: request.role ?? "delegate",
         write: Boolean(request.write),
         sessionId: turnResumeId,
+        timeoutSec: request.timeoutSec,
         onStream: streamForwarder
       });
 
