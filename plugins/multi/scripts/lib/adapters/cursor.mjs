@@ -23,11 +23,11 @@
  * tools normally and is cancelled by killing the process tree.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import readline from "node:readline";
 import process from "node:process";
 
-import { spawnCommand } from "../process.mjs";
+import { spawnCommand, terminateProcessTree } from "../process.mjs";
 import { buildSpawnEnvironment } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
 import { runAcpTurn } from "../acp/client.mjs";
@@ -353,9 +353,8 @@ export function normalizeHeadlessOutcome({ events = [], stdoutText = "", stderr 
 export function getCursorAvailability() {
   const cli = findCursorBinary();
   try {
-    const version = execSync(`"${cli}" --version`, {
+    const version = execFileSync(cli, ["--version"], {
       encoding: "utf8",
-      shell: true,
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 8000
     }).trim();
@@ -377,9 +376,8 @@ export function getCursorAvailability() {
 export function getCursorAuthStatus() {
   const cli = findCursorBinary();
   try {
-    const output = execSync(`"${cli}" status`, {
+    const output = execFileSync(cli, ["status"], {
       encoding: "utf8",
-      shell: true,
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 10000
     });
@@ -406,6 +404,16 @@ export function getCursorAuthStatus() {
 
 // ─── Headless turn ─────────────────────────────────────────────────────────────
 
+// Cursor's CLI has no timeout flag of its own, so the watchdog is the only thing
+// standing between a wedged agent and a job that never returns. Slack matches the
+// Cline adapter so a CLI that is merely slow is not killed at its own deadline.
+const DEFAULT_TIMEOUT_SECS = Number(process.env.CURSOR_TIMEOUT_SECS || 300);
+const WATCHDOG_SLACK_SECS = 10;
+
+function resolveTimeoutSec(timeoutSec) {
+  return Number.isFinite(timeoutSec) ? timeoutSec : DEFAULT_TIMEOUT_SECS;
+}
+
 /**
  * Run a single prompt through Cursor headless print mode and capture the result.
  * The prompt is written to stdin (newline-safe). For write roles we stream-parse
@@ -416,7 +424,7 @@ export function getCursorAuthStatus() {
  *
  * @param {string} cwd
  * @param {string} prompt
- * @param {{ model?: string, role?: string, write?: boolean, sessionId?: string|null, env?: NodeJS.ProcessEnv, onStream?: (event: any) => void, outputFormat?: string }} [options]
+ * @param {{ model?: string, role?: string, write?: boolean, sessionId?: string|null, env?: NodeJS.ProcessEnv, onStream?: (event: any) => void, outputFormat?: string, timeoutSec?: number, watchdogSlackSec?: number }} [options]
  * @returns {Promise<{ sessionId: string|null, text: string, error: object|null, status: number, fileChanges: Array, commandExecutions: Array, toolCalls: Array }>}
  */
 export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
@@ -435,11 +443,17 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
     maybeWarnAboutCursorVersion(getCursorAvailability().version);
   }
 
+  const timeoutSec = resolveTimeoutSec(options.timeoutSec);
+  const slackSec = Number.isFinite(options.watchdogSlackSec) ? options.watchdogSlackSec : WATCHDOG_SLACK_SECS;
+  const watchdogMs = (timeoutSec + slackSec) * 1000;
+
   return await new Promise((resolve) => {
     let settled = false;
+    let watchdog = null;
     const finish = (value) => {
       if (settled) return;
       settled = true;
+      if (watchdog) clearTimeout(watchdog);
       resolve(value);
     };
 
@@ -449,12 +463,28 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
         cwd,
         env: buildSpawnEnvironment(options.env ?? process.env),
         stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
         windowsHide: true
       });
     } catch (error) {
       finish({ sessionId: null, text: "", error, status: 1, fileChanges: [], commandExecutions: [], toolCalls: [] });
       return;
     }
+
+    watchdog = setTimeout(() => {
+      if (Number.isFinite(child.pid)) {
+        try { terminateProcessTree(child.pid); } catch { /* best-effort */ }
+      }
+      finish({
+        sessionId: null,
+        text: "",
+        error: { code: "CursorTimeout", message: `Cursor exceeded adapter watchdog (${watchdogMs}ms)` },
+        status: 1,
+        fileChanges: [],
+        commandExecutions: [],
+        toolCalls: []
+      });
+    }, watchdogMs);
 
     const events = [];
     let stdoutText = "";
