@@ -73,12 +73,25 @@ function lastRunResult(stdout) {
 
 const DEFAULT_MODEL = process.env.CLINE_CLI_DEFAULT_MODEL || "cline-pass/deepseek-v4-flash";
 const DEFAULT_PROVIDER = process.env.CLINE_CLI_DEFAULT_PROVIDER || "cline-pass";
-const DEFAULT_TIMEOUT = Number(process.env.CLINE_TIMEOUT_SECS || 300);
+// A malformed CLINE_TIMEOUT_SECS must not survive as NaN: it would reach the CLI
+// as `-t NaN`, and setTimeout(fn, NaN) coerces to a 1ms timer, so the watchdog
+// would kill every run the moment it started. Negative values fall back for the
+// same reason. An explicit timeoutSec: 0 from a caller is still honored — that
+// is a real (if tight) deadline, not a request to disable the watchdog.
+const FALLBACK_TIMEOUT_SECS = 300;
 const WATCHDOG_SLACK_SECS = 10;
+
+function parseTimeoutSecs(raw) {
+  if (raw === undefined || String(raw).trim() === "") return FALLBACK_TIMEOUT_SECS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : FALLBACK_TIMEOUT_SECS;
+}
+
+const DEFAULT_TIMEOUT = parseTimeoutSecs(process.env.CLINE_TIMEOUT_SECS);
 const SYSTEM = "You are a code reviewer. Review ONLY the diff given in the user message. Do NOT use any tools, do NOT read files, do NOT explore the repository — everything you need is in the diff. Respond with your complete review in a single message and then stop immediately. Focus on correctness, security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
 
 function resolveTimeoutSec(timeoutSec) {
-  return Number.isFinite(timeoutSec) ? timeoutSec : DEFAULT_TIMEOUT;
+  return Number.isFinite(timeoutSec) && timeoutSec >= 0 ? timeoutSec : DEFAULT_TIMEOUT;
 }
 
 export function buildArgs({ cwd, prompt, model, provider, system, timeoutSec }) {
