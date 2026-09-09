@@ -57,6 +57,50 @@ test("runHeadlessCursorTurn kills a wedged agent once the watchdog expires", asy
   }
 });
 
+test("the watchdog actually kills the child, not just the pending promise", async () => {
+  // The stub outlives the watchdog and then touches a sentinel. If the kill only
+  // resolved the promise and left the process running, the sentinel appears.
+  const sentinelDir = mkdtempSync(join(tmpdir(), "cursor-alive-"));
+  const sentinel = join(sentinelDir, "survived");
+  const { dir, path } = stubAgent(`sleep 2\ntouch ${sentinel}`);
+  const cwd = mkdtempSync(join(tmpdir(), "cursor-cwd-"));
+  try {
+    const result = await withCursorPath(path, () =>
+      runHeadlessCursorTurn(cwd, "hello", { timeoutSec: 1, watchdogSlackSec: 0 })
+    );
+    assert.notEqual(result.status, 0);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    assert.equal(existsSync(sentinel), false, "the stub outlived the watchdog kill");
+  } finally {
+    rmSync(sentinelDir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a malformed CURSOR_TIMEOUT_SECS falls back instead of becoming a 0ms watchdog", async () => {
+  // Number("abc") is NaN and setTimeout(fn, NaN) fires immediately, so a typo'd
+  // env var would kill every turn on arrival. Re-import with a cache-busting
+  // query so the module-level default is re-read under the bad value.
+  const { dir, path } = stubAgent(`printf '%s' '{"type":"result","result":"survived"}'`);
+  const cwd = mkdtempSync(join(tmpdir(), "cursor-cwd-"));
+  const previous = process.env.CURSOR_TIMEOUT_SECS;
+  process.env.CURSOR_TIMEOUT_SECS = "abc";
+  try {
+    const fresh = await import(
+      new URL("../../plugins/multi/scripts/lib/adapters/cursor.mjs?malformed-timeout", import.meta.url)
+    );
+    const result = await withCursorPath(path, () => fresh.runHeadlessCursorTurn(cwd, "hello", {}));
+    assert.equal(result.status, 0, "a garbage timeout must not kill a healthy turn");
+    assert.match(result.text, /survived/);
+  } finally {
+    if (previous === undefined) delete process.env.CURSOR_TIMEOUT_SECS;
+    else process.env.CURSOR_TIMEOUT_SECS = previous;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("runHeadlessCursorTurn leaves a fast agent alone", async () => {
   const { dir, path } = stubAgent(`printf '%s' '{"type":"result","result":"done"}'`);
   const cwd = mkdtempSync(join(tmpdir(), "cursor-cwd-"));

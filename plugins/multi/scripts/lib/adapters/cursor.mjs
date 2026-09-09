@@ -23,11 +23,11 @@
  * tools normally and is cancelled by killing the process tree.
  */
 
-import { execFileSync, execSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import readline from "node:readline";
 import process from "node:process";
 
-import { spawnCommand, terminateProcessTree } from "../process.mjs";
+import { runCommand, spawnCommand, terminateProcessTree } from "../process.mjs";
 import { buildSpawnEnvironment } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
 import { runAcpTurn } from "../acp/client.mjs";
@@ -352,20 +352,23 @@ export function normalizeHeadlessOutcome({ events = [], stdoutText = "", stderr 
  */
 export function getCursorAvailability() {
   const cli = findCursorBinary();
-  try {
-    const version = execFileSync(cli, ["--version"], {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 8000
-    }).trim();
-    return { available: true, detail: `agent ${version}`, version };
-  } catch (err) {
+  // runCommand, not execFileSync: Cursor ships a .cmd wrapper on Windows, which
+  // execFile cannot launch without a shell. runCommand routes .bat/.cmd through
+  // cmd.exe with quoted args and passes an argv array everywhere else, so the
+  // binary path is never evaluated as shell syntax on POSIX.
+  const result = runCommand(cli, ["--version"], { timeout: 8000 });
+  if (result.error || result.status !== 0) {
+    const reason = result.error
+      ? String(result.error.message ?? result.error)
+      : (String(result.stderr).trim() || `exited ${result.status}`);
     return {
       available: false,
-      detail: `Cursor agent CLI not found (tried: ${cli}). Error: ${String(err.message ?? err)}`,
+      detail: `Cursor agent CLI not found (tried: ${cli}). Error: ${reason}`,
       version: null
     };
   }
+  const version = String(result.stdout).trim();
+  return { available: true, detail: `agent ${version}`, version };
 }
 
 /**
@@ -375,31 +378,25 @@ export function getCursorAvailability() {
  */
 export function getCursorAuthStatus() {
   const cli = findCursorBinary();
-  try {
-    const output = execFileSync(cli, ["status"], {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 10000
-    });
-    const lower = output.toLowerCase();
-    // Look for common "not signed in" / "not logged in" indicators.
-    const notSignedIn =
-      lower.includes("not signed in") ||
-      lower.includes("not logged in") ||
-      lower.includes("unauthenticated") ||
-      lower.includes("please sign in");
-    if (notSignedIn) {
-      return { authenticated: false, loggedIn: false, method: null, detail: output.trim() };
-    }
-    return { authenticated: true, loggedIn: true, method: "cursor-account", detail: output.trim() };
-  } catch (err) {
-    return {
-      authenticated: false,
-      loggedIn: false,
-      method: null,
-      detail: String(err.message ?? err)
-    };
+  const result = runCommand(cli, ["status"], { timeout: 10000 });
+  if (result.error || result.status !== 0) {
+    const reason = result.error
+      ? String(result.error.message ?? result.error)
+      : (String(result.stderr).trim() || `exited ${result.status}`);
+    return { authenticated: false, loggedIn: false, method: null, detail: reason };
   }
+  const output = String(result.stdout);
+  const lower = output.toLowerCase();
+  // Look for common "not signed in" / "not logged in" indicators.
+  const notSignedIn =
+    lower.includes("not signed in") ||
+    lower.includes("not logged in") ||
+    lower.includes("unauthenticated") ||
+    lower.includes("please sign in");
+  if (notSignedIn) {
+    return { authenticated: false, loggedIn: false, method: null, detail: output.trim() };
+  }
+  return { authenticated: true, loggedIn: true, method: "cursor-account", detail: output.trim() };
 }
 
 // ─── Headless turn ─────────────────────────────────────────────────────────────
@@ -407,11 +404,24 @@ export function getCursorAuthStatus() {
 // Cursor's CLI has no timeout flag of its own, so the watchdog is the only thing
 // standing between a wedged agent and a job that never returns. Slack matches the
 // Cline adapter so a CLI that is merely slow is not killed at its own deadline.
-const DEFAULT_TIMEOUT_SECS = Number(process.env.CURSOR_TIMEOUT_SECS || 300);
+// A malformed CURSOR_TIMEOUT_SECS must not become NaN: setTimeout(fn, NaN)
+// fires immediately, which would kill every turn the moment it starts. An
+// explicit "0" is honored as a literal deadline (the turn gets only the slack
+// window), not as "disable the watchdog" — same meaning timeoutSec: 0 carries
+// in the Cline adapter.
+const FALLBACK_TIMEOUT_SECS = 300;
 const WATCHDOG_SLACK_SECS = 10;
 
+function parseTimeoutSecs(raw) {
+  if (raw === undefined || String(raw).trim() === "") return FALLBACK_TIMEOUT_SECS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : FALLBACK_TIMEOUT_SECS;
+}
+
+const DEFAULT_TIMEOUT_SECS = parseTimeoutSecs(process.env.CURSOR_TIMEOUT_SECS);
+
 function resolveTimeoutSec(timeoutSec) {
-  return Number.isFinite(timeoutSec) ? timeoutSec : DEFAULT_TIMEOUT_SECS;
+  return Number.isFinite(timeoutSec) && timeoutSec >= 0 ? timeoutSec : DEFAULT_TIMEOUT_SECS;
 }
 
 /**
