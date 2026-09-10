@@ -10,6 +10,7 @@
  * timeout.
  */
 
+import { envNumber } from "../env.mjs";
 import { binaryAvailable, spawnCommand, terminateProcessTree } from "../process.mjs";
 import { parseReview, ReviewParseError, EmptyReviewError, ReviewTimeoutError } from "./cline-parse.mjs";
 import { truncateUtf8 } from "../text.mjs";
@@ -81,13 +82,9 @@ const DEFAULT_PROVIDER = process.env.CLINE_CLI_DEFAULT_PROVIDER || "cline-pass";
 const FALLBACK_TIMEOUT_SECS = 300;
 const WATCHDOG_SLACK_SECS = 10;
 
-function parseTimeoutSecs(raw) {
-  if (raw === undefined || String(raw).trim() === "") return FALLBACK_TIMEOUT_SECS;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : FALLBACK_TIMEOUT_SECS;
-}
-
-const DEFAULT_TIMEOUT = parseTimeoutSecs(process.env.CLINE_TIMEOUT_SECS);
+const DEFAULT_TIMEOUT = envNumber(process.env.CLINE_TIMEOUT_SECS, FALLBACK_TIMEOUT_SECS, {
+  allowZero: true
+});
 const SYSTEM = "You are a code reviewer. Review ONLY the diff given in the user message. Do NOT use any tools, do NOT read files, do NOT explore the repository — everything you need is in the diff. Respond with your complete review in a single message and then stop immediately. Focus on correctness, security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
 
 function resolveTimeoutSec(timeoutSec) {

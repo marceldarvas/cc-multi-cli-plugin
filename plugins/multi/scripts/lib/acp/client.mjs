@@ -32,6 +32,7 @@ import {
   ClientSideConnection,
   PROTOCOL_VERSION,
 } from "./vendor/acp-sdk.bundle.mjs";
+import { envNumber } from "../env.mjs";
 import { terminateProcessTree } from "../process.mjs";
 import { sanitizeDiagnosticMessage } from "./diagnostics.mjs";
 
@@ -52,10 +53,9 @@ const DEFAULT_OVERALL_MS = 1800000;
  * @param {number} fallback
  */
 function envWindowMs(env, name, fallback) {
-  const raw = env?.[name];
-  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  // No allowZero: a watchdog window of 0 would expire instantly, so treat it as
+  // unset rather than as an instruction to kill on arrival.
+  return envNumber(env?.[name], fallback);
 }
 
 /** Client identity advertised to the agent (never carries prompt content). */
