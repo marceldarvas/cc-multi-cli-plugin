@@ -6,7 +6,7 @@ const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"]);
 const windowsCommandCache = new Map();
 
 export function runCommand(command, args = [], options = {}) {
-  const resolved = resolveSpawnCommand(command, options.env);
+  const resolved = resolveSpawnCommand(command, options.env, options.platform);
   const spawnOptions = {
     cwd: options.cwd,
     env: options.env,
@@ -18,12 +18,29 @@ export function runCommand(command, args = [], options = {}) {
     windowsHide: true
   };
 
-  const result = resolved.shellCommand
-    ? spawnSync(buildWindowsShellCommand(resolved.command, args), {
-        ...spawnOptions,
-        shell: true
-      })
-    : spawnSync(resolved.command, args, spawnOptions);
+  // An unquotable argument is a command-construction failure, and runCommand's
+  // contract is to report failures in `result.error` rather than throw — callers
+  // like adapter.isAvailable() must return a shape, not blow up. Without this,
+  // refusing an argument would break every non-throwing caller on Windows.
+  let result;
+  try {
+    result = resolved.shellCommand
+      ? spawnSync(buildWindowsShellCommand(resolved.command, args), {
+          ...spawnOptions,
+          shell: true
+        })
+      : spawnSync(resolved.command, args, spawnOptions);
+  } catch (error) {
+    return {
+      command,
+      args,
+      status: 1,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      error
+    };
+  }
 
   return {
     command,
@@ -166,8 +183,10 @@ export function formatCommandFailure(result) {
   return parts.join(": ");
 }
 
-function resolveSpawnCommand(command, env = process.env) {
-  if (process.platform !== "win32") {
+// `platform` is injectable so the Windows branch is reachable from tests on a
+// POSIX host — it was untestable before, which is how its quoting bug survived.
+function resolveSpawnCommand(command, env = process.env, platform = process.platform) {
+  if (platform !== "win32") {
     return { command, shellCommand: false };
   }
 
@@ -235,10 +254,14 @@ export function quoteWindowsShellArg(value) {
       "cmd.exe has no quote escape; refusing rather than emitting a command the shell would re-parse."
     );
   }
-  if (text.includes("%")) {
+  // Only a %…% PAIR can expand. A lone '%' is literal to cmd.exe, and '%' is a
+  // legal Windows filename character (the reserved set is < > : " / \ | ? * and
+  // control chars), so "C:/100% funded/agent.cmd" must keep working.
+  if (/%[^%]*%/.test(text)) {
     throw new Error(
-      `Cannot safely pass '%' through cmd.exe (value: ${JSON.stringify(text)}). ` +
-      "cmd.exe performs variable expansion inside double quotes, which would rewrite the value."
+      `Cannot safely pass a %VAR% pair through cmd.exe (value: ${JSON.stringify(text)}). ` +
+      "cmd.exe expands %NAME% inside double quotes, which would rewrite the value. " +
+      "A single '%' is fine; only a matched pair is refused."
     );
   }
   // eslint-disable-next-line no-control-regex
