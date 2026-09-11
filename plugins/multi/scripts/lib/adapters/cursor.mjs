@@ -27,6 +27,7 @@ import { execSync } from "node:child_process";
 import readline from "node:readline";
 import process from "node:process";
 
+import { envNumber } from "../env.mjs";
 import { runCommand, spawnCommand, terminateProcessTree } from "../process.mjs";
 import { buildSpawnEnvironment } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
@@ -412,13 +413,9 @@ export function getCursorAuthStatus() {
 const FALLBACK_TIMEOUT_SECS = 300;
 const WATCHDOG_SLACK_SECS = 10;
 
-function parseTimeoutSecs(raw) {
-  if (raw === undefined || String(raw).trim() === "") return FALLBACK_TIMEOUT_SECS;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : FALLBACK_TIMEOUT_SECS;
-}
-
-const DEFAULT_TIMEOUT_SECS = parseTimeoutSecs(process.env.CURSOR_TIMEOUT_SECS);
+const DEFAULT_TIMEOUT_SECS = envNumber(process.env.CURSOR_TIMEOUT_SECS, FALLBACK_TIMEOUT_SECS, {
+  allowZero: true
+});
 
 function resolveTimeoutSec(timeoutSec) {
   return Number.isFinite(timeoutSec) && timeoutSec >= 0 ? timeoutSec : DEFAULT_TIMEOUT_SECS;

@@ -6,7 +6,7 @@ const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"]);
 const windowsCommandCache = new Map();
 
 export function runCommand(command, args = [], options = {}) {
-  const resolved = resolveSpawnCommand(command, options.env);
+  const resolved = resolveSpawnCommand(command, options.env, options.platform);
   const spawnOptions = {
     cwd: options.cwd,
     env: options.env,
@@ -18,12 +18,29 @@ export function runCommand(command, args = [], options = {}) {
     windowsHide: true
   };
 
-  const result = resolved.shellCommand
-    ? spawnSync(buildWindowsShellCommand(resolved.command, args), {
-        ...spawnOptions,
-        shell: true
-      })
-    : spawnSync(resolved.command, args, spawnOptions);
+  // An unquotable argument is a command-construction failure, and runCommand's
+  // contract is to report failures in `result.error` rather than throw — callers
+  // like adapter.isAvailable() must return a shape, not blow up. Without this,
+  // refusing an argument would break every non-throwing caller on Windows.
+  let result;
+  try {
+    result = resolved.shellCommand
+      ? spawnSync(buildWindowsShellCommand(resolved.command, args), {
+          ...spawnOptions,
+          shell: true
+        })
+      : spawnSync(resolved.command, args, spawnOptions);
+  } catch (error) {
+    return {
+      command,
+      args,
+      status: 1,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      error
+    };
+  }
 
   return {
     command,
@@ -166,8 +183,10 @@ export function formatCommandFailure(result) {
   return parts.join(": ");
 }
 
-function resolveSpawnCommand(command, env = process.env) {
-  if (process.platform !== "win32") {
+// `platform` is injectable so the Windows branch is reachable from tests on a
+// POSIX host — it was untestable before, which is how its quoting bug survived.
+function resolveSpawnCommand(command, env = process.env, platform = process.platform) {
+  if (platform !== "win32") {
     return { command, shellCommand: false };
   }
 
@@ -213,14 +232,43 @@ function getWindowsExtension(command) {
   return match ? `.${match[1].toLowerCase()}` : "";
 }
 
-function buildWindowsShellCommand(command, args) {
+export function buildWindowsShellCommand(command, args) {
   return [command, ...args].map(quoteWindowsShellArg).join(" ");
 }
 
-function quoteWindowsShellArg(value) {
+// cmd.exe has no escape character inside a quoted run — a backslash is a
+// literal, so the old `\"` produced a value that closed its own quote and let
+// the rest of the string parse as command syntax. There is no encoding that
+// makes an embedded quote safe here, so unquotable input fails closed rather
+// than being mangled or smuggled through. `%` is refused for the same reason in
+// the other direction: cmd.exe expands %VAR% *inside* double quotes, so it would
+// silently rewrite the value.
+//
+// This path only carries binary paths and CLI flags (prompts travel on stdin),
+// none of which legitimately contain a quote, a percent, or a control character.
+export function quoteWindowsShellArg(value) {
   const text = String(value);
-  if (/[\r\n]/.test(text)) {
-    throw new Error("Cannot safely pass newline-containing arguments through cmd.exe.");
+  if (text.includes('"')) {
+    throw new Error(
+      `Cannot safely pass a double quote through cmd.exe (value: ${JSON.stringify(text)}). ` +
+      "cmd.exe has no quote escape; refusing rather than emitting a command the shell would re-parse."
+    );
   }
-  return `"${text.replace(/"/g, '\\"')}"`;
+  // Only a %…% PAIR can expand. A lone '%' is literal to cmd.exe, and '%' is a
+  // legal Windows filename character (the reserved set is < > : " / \ | ? * and
+  // control chars), so "C:/100% funded/agent.cmd" must keep working.
+  if (/%[^%]*%/.test(text)) {
+    throw new Error(
+      `Cannot safely pass a %VAR% pair through cmd.exe (value: ${JSON.stringify(text)}). ` +
+      "cmd.exe expands %NAME% inside double quotes, which would rewrite the value. " +
+      "A single '%' is fine; only a matched pair is refused."
+    );
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(text)) {
+    throw new Error(
+      "Cannot safely pass control characters (including newlines) through cmd.exe."
+    );
+  }
+  return `"${text}"`;
 }
