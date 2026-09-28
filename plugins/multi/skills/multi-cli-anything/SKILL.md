@@ -225,7 +225,7 @@ Use exactly one Bash call:
 
 **Model by role** (this mirrors the shipped forwarders and the official `codex-plugin-cc`):
 - **Sonnet** for forwarders that *frame or route* the prompt — write/agentic roles (implement, delegate) and anything choosing model/effort. Better framing materially improves what the external CLI then produces.
-- **Haiku** for pure path-bridges that do *no* framing — a read-only research/review forwarder that just passes flags through. Cheapest correct model.
+- **Sonnet** for pure path-bridges too — a read-only research/review forwarder that just passes flags through. Never Haiku: under an injected CLI outage a Haiku wrapper substituted its own answer instead of reporting the failure.
 
 Use `multi-plan-handoff` (already shipped) on the parent side for execute/delegate roles — no per-CLI work needed; just reference it from the command file (Step 7).
 

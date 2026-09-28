@@ -12,7 +12,7 @@ User: /codex:review
 plugins/codex/commands/review.md            slash command — forwards to the subagent
   │
   ▼
-plugins/multi/agents/codex-review.md        thin forwarder subagent (model: haiku)
+plugins/multi/agents/codex-review.md        thin forwarder subagent (model: sonnet)
   │  builds exactly one Bash call, per its skill contract; does no reasoning
   ▼
 multi-cli-companion.mjs review --cli codex --cwd <dir>   CLI entrypoint + dispatcher
