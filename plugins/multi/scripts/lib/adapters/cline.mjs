@@ -72,7 +72,7 @@ function lastRunResult(stdout) {
   return null;
 }
 
-const DEFAULT_MODEL = process.env.CLINE_CLI_DEFAULT_MODEL || "cline-pass/deepseek-v4-flash";
+const DEFAULT_MODEL = process.env.CLINE_CLI_DEFAULT_MODEL || "cline-pass/deepseek-v4.1-flash";
 const DEFAULT_PROVIDER = process.env.CLINE_CLI_DEFAULT_PROVIDER || "cline-pass";
 // A malformed CLINE_TIMEOUT_SECS must not survive as NaN: it would reach the CLI
 // as `-t NaN`, and setTimeout(fn, NaN) coerces to a 1ms timer, so the watchdog

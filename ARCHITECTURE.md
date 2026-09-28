@@ -98,7 +98,7 @@ with no in-flight turn and no activity for `CODEX_COMPANION_BROKER_IDLE_MS`
 - **Cline** — this fork's review-only addition (`lib/adapters/cline.mjs`), spawning
   `cline -p --json` with the companion-resolved git diff as the prompt. `-p` is
   `--plan` and is what keeps Cline from writing files. Default model
-  `cline-pass/glm-5.2`.
+  `cline-pass/deepseek-v4.1-flash`.
 - **Antigravity** — headless `agy -p` (`lib/adapters/antigravity.mjs`). `agy`'s
   headless stdout is empty upstream (gemini-cli#27466), so the adapter learns the
   conversation id from a per-invocation `--log-file` and recovers the answer from
