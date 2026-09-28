@@ -114,7 +114,7 @@ All examples use `<cli>`, `<cli-a>`, `<cli-b>`, `<role>`, `<action>` as placehol
 
 **Pick the right template (this is what the old `buildPrompt` model hid):**
 - A **write/agentic role** (implement, edit, refactor) → copy a write forwarder like `cursor-delegate.md` or `codex-execute.md`. These carry a **prompt-framing block** and run on **Sonnet**.
-- A **read-only role** (research, explore, review) → copy a read forwarder like `codex-review.md`, `cursor-research.md`, `antigravity-researcher.md`, or `opencode-researcher.md`. These have little/no framing; a pure path-bridge (no framing) can run on **Haiku**.
+- A **read-only role** (research, explore, review) → copy a read forwarder like `codex-review.md`, `cursor-research.md`, `antigravity-researcher.md`, or `opencode-researcher.md`. These have little/no framing but still run on **Sonnet** — a Haiku wrapper was observed substituting its own answer when the CLI failed.
 
 Every forwarder MUST keep `skills:\n  - multi-cli-runtime` in its frontmatter — that's the shared flag/failure contract. Don't drop it.
 
@@ -128,7 +128,7 @@ Every forwarder MUST keep `skills:\n  - multi-cli-runtime` in its frontmatter �
 
 **Illustrative:** user says "add `/codex:explore`" (a read-only codebase-Q&A role for Codex, paralleling `/cursor:explore`). Step 2 confirms Codex can run read-only (`--read-only` → the companion uses the `read-only` sandbox).
 → Create `plugins/codex/commands/explore.md` (dispatching to `multi:codex-explore`).
-→ Create `plugins/multi/agents/codex-explore.md` (copy `codex-review.md` as the read-only template; forward with `--cli codex --role explore --read-only`; Haiku is fine since it does no framing).
+→ Create `plugins/multi/agents/codex-explore.md` (copy `codex-review.md` as the read-only template; forward with `--cli codex --role explore --read-only`; keep `model: sonnet`).
 → No adapter edit needed: Codex's read/write is the sandbox toggled by `--read-only`/`--write`, not a per-role map.
 
 ### 3. Disable a command or subagent
@@ -285,7 +285,7 @@ User says: *"Make Cursor my reviewer instead of Codex."* (Cursor has no `review`
 3. Step 2: confirm Cursor's read-only mode is `--mode ask` (`agent --help`) — it is; the adapter already uses it for `research`/`explore`.
 4. Safety commit if the tree is dirty.
 5. Adapter: add `"reviewer"` (and/or `"review"`) to `READ_ONLY_ROLES` in `cursor.mjs` so the role runs `--mode ask --force` (read-only). `node --check` it.
-6. Forwarder: create `plugins/multi/agents/cursor-review.md` — copy `codex-review.md` (the read-only template), set `name: cursor-review`, keep `skills: [multi-cli-runtime]`, set `model: haiku` (pure bridge, no framing), and forward `task --cli cursor --role reviewer --read-only`.
+6. Forwarder: create `plugins/multi/agents/cursor-review.md` — copy `codex-review.md` (the read-only template), set `name: cursor-review`, keep `skills: [multi-cli-runtime]`, set `model: sonnet` (pure bridge, but it must honor the failure contract; no framing), and forward `task --cli cursor --role reviewer --read-only`.
 7. Command: create `plugins/cursor/commands/review.md` — copy `plugins/codex/commands/review.md`, change the dispatch to `multi:cursor-review`.
 8. Optionally disable Codex's reviewer (delete/underscore `codex-review.md` + `plugins/codex/commands/review.md`) if Codex shouldn't review anymore — or leave it for both.
 9. `npm test` + `claude plugin validate $REPO` via Bash — must pass.
