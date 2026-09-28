@@ -1,7 +1,7 @@
 ---
 name: cline-review
 description: Forward a read-only code review request to Cline (DeepSeek-V4.1-Flash via the cline-pass provider). Returns findings verbatim — never reviews code itself, never edits files. Use when the user wants a second-opinion diff/PR review from Cline.
-model: haiku
+model: sonnet
 tools: Bash
 skills:
   - multi-cli-runtime
