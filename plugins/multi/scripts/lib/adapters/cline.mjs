@@ -13,23 +13,6 @@
 import { envNumber } from "../env.mjs";
 import { binaryAvailable, spawnCommand, terminateProcessTree } from "../process.mjs";
 import { parseReview, ReviewParseError, EmptyReviewError, ReviewTimeoutError } from "./cline-parse.mjs";
-import { truncateUtf8 } from "../text.mjs";
-
-const PROMPT_BUDGET = 768 * 1024;
-
-/**
- * Builds the diff-as-prompt body for a cline review run. Truncates large diffs
- * with a descriptive marker. Appends an optional reviewer focus instruction.
- */
-export function buildReviewPrompt(diff, { focus } = {}) {
-  const body = "Review this diff for bugs:\n";
-  const { text: diffText, truncated, origBytes } = truncateUtf8(diff, PROMPT_BUDGET - body.length - 200);
-  const marker = truncated
-    ? `[TRUNCATED: diff was ${Math.round(origBytes / 1024)} KB; reviewing first ${Math.round(Buffer.byteLength(diffText, "utf8") / 1024)} KB. Narrow with --base or review fewer files.]\n`
-    : "";
-  const focusSuffix = focus && focus.trim() ? `\n\nReviewer focus: ${focus.trim()}` : "";
-  return body + marker + diffText + focusSuffix;
-}
 
 // Map cline-plugin-cc's parseReview shape → the { text, error, ... } contract.
 // Owns error CLASSIFICATION: a run_result{finishReason:"error"} (bad model/auth/config)

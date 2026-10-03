@@ -1,7 +1,7 @@
 {
   "name": "cursor",
-  "description": "Delegate implementation, web research, and codebase exploration to the Cursor CLI (headless agent -p). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
-  "version": "0.1.2",
+  "description": "Delegate implementation, web research, codebase exploration, and diff review to the Cursor CLI (headless cursor-agent -p). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
+  "version": "0.1.3",
   "author": {
     "name": "greenpolo",
     "url": "https://github.com/greenpolo"
@@ -12,6 +12,7 @@
     "cursor",
     "delegate",
     "research",
-    "explore"
+    "explore",
+    "review"
   ]
 }

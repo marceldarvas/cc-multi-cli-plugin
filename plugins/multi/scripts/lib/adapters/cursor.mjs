@@ -25,6 +25,9 @@
  */
 
 import { execSync } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import readline from "node:readline";
 import process from "node:process";
 
@@ -135,6 +138,7 @@ function findCursorBinary() {
 // ─── Role → headless flags ────────────────────────────────────────────────────
 
 const READ_ONLY_ROLES = new Set([
+  "review",
   "research",
   "researcher",
   "explore",
@@ -854,6 +858,99 @@ export async function cancelAcpCursor(jobId) {
     transport: "process-tree",
     detail: `No in-flight ACP turn in this process; Cursor ACP jobs are cancelled by killing the process tree (job ${jobId}).`
   };
+}
+
+// ─── Diff-only review ──────────────────────────────────────────────────────────
+//
+// `--mode ask` is not a boundary (the model still attempts edits and shell), and
+// a deny config alone is overridden by a reviewed repo's own `.cursor/cli.json`,
+// while its `.cursor/hooks.json` runs commands at session start. So a review
+// never sees the repo: Cursor runs in an empty throwaway workspace with a fresh
+// per-run config dir that denies every tool, and the diff arrives in the prompt.
+// User-level config under $HOME/.cursor (hooks, MCP) still loads: Cursor reads
+// it from the home directory, and its login lives there too.
+
+// Cursor's headless mode has no system-prompt flag, so these lead the prompt.
+const REVIEW_INSTRUCTIONS =
+  "You are a code reviewer. Review ONLY the diff below. There is no repository to read and your tools are disabled; " +
+  "everything you need is in the diff. Respond with your complete review in a single message. Focus on correctness, " +
+  "security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
+
+// Read is denied too: a review never needs a file, and a prompt-injected diff
+// could otherwise have Cursor read a file outside the workspace and quote it.
+export const REVIEW_DENY_PERMISSIONS = ["Read(**)", "Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"];
+
+// Review temp dirs are named `<prefix><owner pid>-<random>`.
+const REVIEW_WORKSPACE_PREFIX = "cursor-review-ws-";
+const REVIEW_CONFIG_PREFIX = "cursor-review-cfg-";
+const REVIEW_DIR_PATTERN = /^cursor-review-(?:ws|cfg)-(\d+)-/;
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists but belongs to someone else.
+    return error?.code === "EPERM";
+  }
+}
+
+// A cancelled background review is killed outright, so its `finally` never
+// runs and its temp dirs (the config dir holds Cursor's transcript of the
+// diff) stay behind. Each review removes dirs whose owning process is gone;
+// a live review's dirs are never touched, however long it has been running.
+function sweepOrphanedReviewDirs() {
+  const root = tmpdir();
+  let entries;
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const owner = REVIEW_DIR_PATTERN.exec(name);
+    if (!owner || processIsAlive(Number(owner[1]))) continue;
+    try {
+      rmSync(join(root, name), { recursive: true, force: true });
+    } catch {
+      // Raced with another sweep.
+    }
+  }
+}
+
+/** Write the deny-everything Cursor CLI config a review runs under into `configDir`. */
+export function writeReviewConfig(configDir) {
+  writeFileSync(
+    join(configDir, "cli-config.json"),
+    JSON.stringify({ version: 1, permissions: { allow: [], deny: REVIEW_DENY_PERMISSIONS } })
+  );
+}
+
+/**
+ * Review a diff with Cursor, isolated from the repository it came from.
+ * Headless only: ACP is never used for reviews.
+ *
+ * @param {string} diffPrompt  the diff (and optional focus), as built by buildReviewPrompt
+ * @param {{ model?: string, env?: NodeJS.ProcessEnv, timeoutSec?: number, watchdogSlackSec?: number }} [options]
+ */
+export async function runCursorReview(diffPrompt, options = {}) {
+  sweepOrphanedReviewDirs();
+  const workspace = mkdtempSync(join(tmpdir(), `${REVIEW_WORKSPACE_PREFIX}${process.pid}-`));
+  let configDir = null;
+  try {
+    configDir = mkdtempSync(join(tmpdir(), `${REVIEW_CONFIG_PREFIX}${process.pid}-`));
+    writeReviewConfig(configDir);
+    return await runHeadlessCursorTurn(workspace, `${REVIEW_INSTRUCTIONS}\n\n${diffPrompt}`, {
+      model: options.model,
+      role: "review",
+      timeoutSec: options.timeoutSec,
+      watchdogSlackSec: options.watchdogSlackSec,
+      env: { ...(options.env ?? process.env), CURSOR_CONFIG_DIR: configDir }
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    if (configDir) rmSync(configDir, { recursive: true, force: true });
+  }
 }
 
 // ─── Generic adapter interface ────────────────────────────────────────────────
