@@ -25,7 +25,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import readline from "node:readline";
@@ -880,14 +880,26 @@ const REVIEW_INSTRUCTIONS =
 // could otherwise have Cursor read a file outside the workspace and quote it.
 export const REVIEW_DENY_PERMISSIONS = ["Read(**)", "Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"];
 
+// Review temp dirs are named `<prefix><owner pid>-<random>`.
 const REVIEW_WORKSPACE_PREFIX = "cursor-review-ws-";
 const REVIEW_CONFIG_PREFIX = "cursor-review-cfg-";
+const REVIEW_DIR_PATTERN = /^cursor-review-(?:ws|cfg)-(\d+)-/;
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists but belongs to someone else.
+    return error?.code === "EPERM";
+  }
+}
 
 // A cancelled background review is killed outright, so its `finally` never
 // runs and its temp dirs (the config dir holds Cursor's transcript of the
-// diff) stay behind. Each review sweeps dirs older than any review could run.
-function sweepStaleReviewDirs(timeoutSec) {
-  const maxAgeMs = Math.max(3600, timeoutSec + WATCHDOG_SLACK_SECS) * 1000;
+// diff) stay behind. Each review removes dirs whose owning process is gone;
+// a live review's dirs are never touched, however long it has been running.
+function sweepOrphanedReviewDirs() {
   const root = tmpdir();
   let entries;
   try {
@@ -896,12 +908,12 @@ function sweepStaleReviewDirs(timeoutSec) {
     return;
   }
   for (const name of entries) {
-    if (!name.startsWith(REVIEW_WORKSPACE_PREFIX) && !name.startsWith(REVIEW_CONFIG_PREFIX)) continue;
-    const path = join(root, name);
+    const owner = REVIEW_DIR_PATTERN.exec(name);
+    if (!owner || processIsAlive(Number(owner[1]))) continue;
     try {
-      if (Date.now() - statSync(path).mtimeMs > maxAgeMs) rmSync(path, { recursive: true, force: true });
+      rmSync(join(root, name), { recursive: true, force: true });
     } catch {
-      // Raced with another sweep or the owning review's cleanup.
+      // Raced with another sweep.
     }
   }
 }
@@ -922,11 +934,11 @@ export function writeReviewConfig(configDir) {
  * @param {{ model?: string, env?: NodeJS.ProcessEnv, timeoutSec?: number, watchdogSlackSec?: number }} [options]
  */
 export async function runCursorReview(diffPrompt, options = {}) {
-  sweepStaleReviewDirs(resolveTimeoutSec(options.timeoutSec));
-  const workspace = mkdtempSync(join(tmpdir(), REVIEW_WORKSPACE_PREFIX));
+  sweepOrphanedReviewDirs();
+  const workspace = mkdtempSync(join(tmpdir(), `${REVIEW_WORKSPACE_PREFIX}${process.pid}-`));
   let configDir = null;
   try {
-    configDir = mkdtempSync(join(tmpdir(), REVIEW_CONFIG_PREFIX));
+    configDir = mkdtempSync(join(tmpdir(), `${REVIEW_CONFIG_PREFIX}${process.pid}-`));
     writeReviewConfig(configDir);
     return await runHeadlessCursorTurn(workspace, `${REVIEW_INSTRUCTIONS}\n\n${diffPrompt}`, {
       model: options.model,

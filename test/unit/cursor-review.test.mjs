@@ -256,24 +256,26 @@ test("companion: setup advertises /cursor:review when Cursor is missing", () => 
   }
 });
 
-test("executeTaskRun cursor review: sweeps review temp dirs left behind by a killed run, keeps fresh ones", async () => {
+test("executeTaskRun cursor review: sweeps review temp dirs whose owning process is dead, keeps live owners' dirs", async () => {
   const dir = dirtyRepo();
   const record = mkdtempSync(join(tmpdir(), "cursor-record-"));
   const stub = stubCursor(record);
   // A cancelled background job is killed outright, so its finally never runs.
-  const staleWorkspace = mkdtempSync(join(tmpdir(), "cursor-review-ws-"));
-  const staleConfig = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
-  writeFileSync(join(staleConfig, "transcript"), "diff contents");
-  const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000);
-  for (const d of [staleWorkspace, staleConfig]) utimesSync(d, twoHoursAgo, twoHoursAgo);
-  const freshConfig = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
+  const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+  const orphanWorkspace = mkdtempSync(join(tmpdir(), `cursor-review-ws-${deadPid}-`));
+  const orphanConfig = mkdtempSync(join(tmpdir(), `cursor-review-cfg-${deadPid}-`));
+  writeFileSync(join(orphanConfig, "transcript"), "diff contents");
+  // A live review that has run for hours (long timeout) must survive the sweep.
+  const liveConfig = mkdtempSync(join(tmpdir(), `cursor-review-cfg-${process.ppid}-`));
+  const longAgo = new Date(Date.now() - 5 * 3600 * 1000);
+  utimesSync(liveConfig, longAgo, longAgo);
   try {
     const result = await withCursorPath(stub.path, () => executeTaskRun({ cli: "cursor", cwd: dir, role: "review" }));
     assert.equal(result.exitStatus, 0, result.rendered);
-    assert.equal(existsSync(staleWorkspace), false, "stale workspace is swept");
-    assert.equal(existsSync(staleConfig), false, "stale config dir is swept");
-    assert.equal(existsSync(freshConfig), true, "a possibly-running review's dir is kept");
+    assert.equal(existsSync(orphanWorkspace), false, "a dead owner's workspace is swept");
+    assert.equal(existsSync(orphanConfig), false, "a dead owner's config dir is swept");
+    assert.equal(existsSync(liveConfig), true, "a live owner's dir is kept regardless of age");
   } finally {
-    for (const d of [dir, record, stub.bin, staleWorkspace, staleConfig, freshConfig]) rmSync(d, { recursive: true, force: true });
+    for (const d of [dir, record, stub.bin, orphanWorkspace, orphanConfig, liveConfig]) rmSync(d, { recursive: true, force: true });
   }
 });
