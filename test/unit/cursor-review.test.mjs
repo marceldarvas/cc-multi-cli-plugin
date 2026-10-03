@@ -242,3 +242,16 @@ test("executeTaskRun cursor review: stays on headless print mode even when the A
     for (const d of [dir, record, stub.bin]) rmSync(d, { recursive: true, force: true });
   }
 });
+
+test("companion: setup advertises /cursor:review when Cursor is missing", () => {
+  const data = mkdtempSync(join(tmpdir(), "cursor-review-data-"));
+  try {
+    const env = { ...process.env, CURSOR_AGENT_PATH: MISSING_CURSOR, CLAUDE_PLUGIN_DATA: data };
+    const run = companion(["setup", "--json"], env);
+    assert.equal(run.status, 0, run.stderr);
+    const cursorStep = JSON.parse(run.stdout).nextSteps.find((step) => step.startsWith("Cursor:"));
+    assert.match(cursorStep, /\/cursor:review/);
+  } finally {
+    rmSync(data, { recursive: true, force: true });
+  }
+});

@@ -47,6 +47,7 @@ Provider commands live under each CLI's namespace; the cross-cutting `/multi:*` 
 | `/cursor:delegate` | Delegate an implementation task or plan step to Cursor (agentic; writes code; supports `--until-done`) |
 | `/cursor:research` | Read-only external web/documentation research via Cursor |
 | `/cursor:explore` | Read-only codebase exploration via Cursor |
+| `/cursor:review` | Read-only diff review via Cursor, isolated from the repo (diff in, findings out) |
 | `/cline:review` | Read-only second-opinion code review via Cline (GLM-5.2; this fork) |
 | `/antigravity:research` | Deep external research with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
 | `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
