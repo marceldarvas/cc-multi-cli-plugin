@@ -25,7 +25,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import readline from "node:readline";
@@ -880,6 +880,32 @@ const REVIEW_INSTRUCTIONS =
 // could otherwise have Cursor read a file outside the workspace and quote it.
 export const REVIEW_DENY_PERMISSIONS = ["Read(**)", "Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"];
 
+const REVIEW_WORKSPACE_PREFIX = "cursor-review-ws-";
+const REVIEW_CONFIG_PREFIX = "cursor-review-cfg-";
+
+// A cancelled background review is killed outright, so its `finally` never
+// runs and its temp dirs (the config dir holds Cursor's transcript of the
+// diff) stay behind. Each review sweeps dirs older than any review could run.
+function sweepStaleReviewDirs(timeoutSec) {
+  const maxAgeMs = Math.max(3600, timeoutSec + WATCHDOG_SLACK_SECS) * 1000;
+  const root = tmpdir();
+  let entries;
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(REVIEW_WORKSPACE_PREFIX) && !name.startsWith(REVIEW_CONFIG_PREFIX)) continue;
+    const path = join(root, name);
+    try {
+      if (Date.now() - statSync(path).mtimeMs > maxAgeMs) rmSync(path, { recursive: true, force: true });
+    } catch {
+      // Raced with another sweep or the owning review's cleanup.
+    }
+  }
+}
+
 /** Write the deny-everything Cursor CLI config a review runs under into `configDir`. */
 export function writeReviewConfig(configDir) {
   writeFileSync(
@@ -896,10 +922,11 @@ export function writeReviewConfig(configDir) {
  * @param {{ model?: string, env?: NodeJS.ProcessEnv, timeoutSec?: number, watchdogSlackSec?: number }} [options]
  */
 export async function runCursorReview(diffPrompt, options = {}) {
-  const workspace = mkdtempSync(join(tmpdir(), "cursor-review-ws-"));
+  sweepStaleReviewDirs(resolveTimeoutSec(options.timeoutSec));
+  const workspace = mkdtempSync(join(tmpdir(), REVIEW_WORKSPACE_PREFIX));
   let configDir = null;
   try {
-    configDir = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
+    configDir = mkdtempSync(join(tmpdir(), REVIEW_CONFIG_PREFIX));
     writeReviewConfig(configDir);
     return await runHeadlessCursorTurn(workspace, `${REVIEW_INSTRUCTIONS}\n\n${diffPrompt}`, {
       model: options.model,

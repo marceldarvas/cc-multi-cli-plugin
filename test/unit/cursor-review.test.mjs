@@ -2,7 +2,7 @@
 // ABOUTME: A stub cursor binary records how it was launched; the review path, git, and temp dirs run for real.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -253,5 +253,27 @@ test("companion: setup advertises /cursor:review when Cursor is missing", () => 
     assert.match(cursorStep, /\/cursor:review/);
   } finally {
     rmSync(data, { recursive: true, force: true });
+  }
+});
+
+test("executeTaskRun cursor review: sweeps review temp dirs left behind by a killed run, keeps fresh ones", async () => {
+  const dir = dirtyRepo();
+  const record = mkdtempSync(join(tmpdir(), "cursor-record-"));
+  const stub = stubCursor(record);
+  // A cancelled background job is killed outright, so its finally never runs.
+  const staleWorkspace = mkdtempSync(join(tmpdir(), "cursor-review-ws-"));
+  const staleConfig = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
+  writeFileSync(join(staleConfig, "transcript"), "diff contents");
+  const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000);
+  for (const d of [staleWorkspace, staleConfig]) utimesSync(d, twoHoursAgo, twoHoursAgo);
+  const freshConfig = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
+  try {
+    const result = await withCursorPath(stub.path, () => executeTaskRun({ cli: "cursor", cwd: dir, role: "review" }));
+    assert.equal(result.exitStatus, 0, result.rendered);
+    assert.equal(existsSync(staleWorkspace), false, "stale workspace is swept");
+    assert.equal(existsSync(staleConfig), false, "stale config dir is swept");
+    assert.equal(existsSync(freshConfig), true, "a possibly-running review's dir is kept");
+  } finally {
+    for (const d of [dir, record, stub.bin, staleWorkspace, staleConfig, freshConfig]) rmSync(d, { recursive: true, force: true });
   }
 });
