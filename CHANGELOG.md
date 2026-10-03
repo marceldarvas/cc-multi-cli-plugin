@@ -6,12 +6,6 @@
 
 - **`/cursor:review`: a diff-only Cursor review, isolated from the reviewed repo.** Same interface as `/cline:review` (`[--base <ref>] [focus]`, bare call reviews the working tree). The companion resolves the diff and hands it to Cursor in an empty throwaway workspace with a per-run `CURSOR_CONFIG_DIR` whose `cli-config.json` denies `Shell`, `Write`, `Mcp` and `WebFetch`; both temp dirs are removed afterwards. Why not just `--mode ask`: a live spike against `cursor-agent 2026.10.01` showed the model still *attempts* edits and shell in ask mode (only a deny config stops them), a reviewed repo's own `.cursor/cli.json` overrides that deny config, and its `.cursor/hooks.json` runs commands at session start. Keeping the repo out of the workspace removes all three. The cost: Cursor can't read surrounding code, so this is a second opinion from a different model, not a deeper one. Success needs exit 0 and non-empty text; errors, timeouts, empty or unparseable output fail the job. `--write`, `--until-done` and `--resume-last` are rejected, and reviews always use headless print mode even with `MULTI_TRANSPORT_CURSOR=acp`. An empty diff returns "No changes to review" without needing Cursor, foreground or background. New `multi:cursor-review` forwarder (sonnet).
 
-### Changed
-
-- **The diff and review-prompt builder moved from `cline-diff.mjs` to `review-diff.mjs`**, shared by the Cline and Cursor review paths. No behaviour change.
-
-### Added
-
 - **Cursor Cloud Agent enablement for this fork.** `.cursor/environment.json` bootstraps Cloud Agents with `npm ci` and no `start` script (no servers to keep up). Cloud Agents validate with offline `npm test` only (`test:live` stays operator-local because it needs a signed-in Cline CLI).
 - **Restored the upstream Cursor CLI provider alongside Cline.** `/cursor:delegate`, `/cursor:research`, and `/cursor:explore` are live again (`plugins/cursor/`, `lib/adapters/cursor.mjs`, registry + task/jobs/setup wiring). Cline remains this fork's review-only addition (`/cline:review`). `AGENTS.md` / `ARCHITECTURE.md` / marketplace list `--cli codex|cursor|antigravity|opencode|cline`.
 - **Cline review resolves the git/empty-diff path before requiring the `cline` binary.** Empty-diff and git-error outcomes no longer fail with `Cline is not available`, so `npm test` stays offline on Cloud Agents that have no CLIs. A real diff still requires `cline` on PATH before spawn.
@@ -21,6 +15,8 @@
 - **Failure-mode regression tests** (240 → 243): hang-at-handshake caught by the inactivity watchdog (not the 30-minute overall cap), mid-turn agent crash always yields an explicit error with partial text preserved, and the `MULTI_ACP_INACTIVITY_MS` knob bounds a silent agent. New fake-agent fixture flags `--hang-handshake` and `--die-mid-turn`.
 
 ### Changed
+
+- **The diff and review-prompt builder moved from `cline-diff.mjs` to `review-diff.mjs`**, shared by the Cline and Cursor review paths. No behaviour change.
 
 - **`cline-review` forwarder moved from `model: haiku` to `model: sonnet`**, the last Haiku holdout among the forwarders. Same reason as the earlier move: under an injected CLI outage a Haiku wrapper substituted its own answer instead of reporting the failure. For a review agent that means a fake review while Cline is down.
 
