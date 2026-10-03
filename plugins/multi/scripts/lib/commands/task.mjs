@@ -9,7 +9,7 @@ import { firstMeaningfulLine, shorten } from "../text.mjs";
 import * as cursor from "../adapters/cursor.mjs";
 import * as antigravity from "../adapters/antigravity.mjs";
 import * as cline from "../adapters/cline.mjs";
-import { resolveDiff, NotAGitRepoError, NoCommitsError, BaseRefNotFoundError, NoMergeBaseError } from "../adapters/cline-diff.mjs";
+import { buildReviewPrompt, resolveDiff, NotAGitRepoError, NoCommitsError, BaseRefNotFoundError, NoMergeBaseError } from "../adapters/review-diff.mjs";
 import * as opencode from "../adapters/opencode.mjs";
 import { getAdapter } from "../adapters/registry.mjs";
 import {
@@ -525,7 +525,7 @@ export async function executeTaskRun(request) {
       throw new Error(`Cline is not available: ${clineAvail.detail}`);
     }
 
-    const reviewPrompt = cline.buildReviewPrompt(diffResult.diff, { focus: request.prompt });
+    const reviewPrompt = buildReviewPrompt(diffResult.diff, { focus: request.prompt });
 
     const result = await cline.adapter.invoke(workspaceRoot, reviewPrompt, {
       model: request.model ?? undefined,
