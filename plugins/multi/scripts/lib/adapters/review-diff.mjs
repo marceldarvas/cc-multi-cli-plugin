@@ -1,9 +1,10 @@
-// ABOUTME: Resolves the diff to review — uncommitted (incl. untracked) or a branch vs a base ref.
-// ABOUTME: Returns { diff, filesChanged, isEmpty } and throws typed errors for git edge cases.
+// ABOUTME: Resolves the diff to review — uncommitted (incl. untracked) or a branch vs a base ref — and builds the review prompt.
+// ABOUTME: Shared by the Cline and Cursor review paths; throws typed errors for git edge cases.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { git } from './cline-git.mjs';
+import { truncateUtf8 } from '../text.mjs';
 
 export class NotAGitRepoError extends Error { constructor(m = 'Not inside a git work tree') { super(m); this.name = 'NotAGitRepoError'; } }
 export class NoCommitsError extends Error { constructor(m = 'Repository has no commits yet') { super(m); this.name = 'NoCommitsError'; } }
@@ -53,4 +54,20 @@ export function resolveDiff({ cwd, base }) {
 
   const filesChanged = [...diff.matchAll(/^\+\+\+ (?:b\/)?(.+)$/gm)].map((m) => m[1]).filter((f) => f !== '/dev/null');
   return { diff, filesChanged, isEmpty: diff.trim().length === 0 };
+}
+
+const PROMPT_BUDGET = 768 * 1024;
+
+/**
+ * Builds the diff-as-prompt body for a review run (Cline or Cursor). Truncates large diffs
+ * with a descriptive marker. Appends an optional reviewer focus instruction.
+ */
+export function buildReviewPrompt(diff, { focus } = {}) {
+  const body = "Review this diff for bugs:\n";
+  const { text: diffText, truncated, origBytes } = truncateUtf8(diff, PROMPT_BUDGET - body.length - 200);
+  const marker = truncated
+    ? `[TRUNCATED: diff was ${Math.round(origBytes / 1024)} KB; reviewing first ${Math.round(Buffer.byteLength(diffText, "utf8") / 1024)} KB. Narrow with --base or review fewer files.]\n`
+    : "";
+  const focusSuffix = focus && focus.trim() ? `\n\nReviewer focus: ${focus.trim()}` : "";
+  return body + marker + diffText + focusSuffix;
 }
