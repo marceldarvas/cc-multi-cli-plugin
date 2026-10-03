@@ -1,8 +1,9 @@
 /**
  * Cursor adapter — availability checks, auth status, and running prompts
- * through Cursor's headless print mode (`agent -p`).
+ * through Cursor's headless print mode (`cursor-agent -p`).
  *
- * Cursor's CLI is the `agent` command, installed by Cursor into a per-user
+ * Cursor's CLI is the `cursor-agent` command (also installed as `agent`, a name
+ * other CLIs share — see Binary resolution), installed by Cursor into a per-user
  * location (e.g. C:/Users/<name>/AppData/Local/cursor-agent/agent.cmd on
  * Windows). We drive it in non-interactive print mode and parse its structured
  * output:
@@ -37,40 +38,89 @@ import { resolveCursorAcp } from "../acp/resolve.mjs";
 // ─── Binary resolution ────────────────────────────────────────────────────────
 //
 // Cursor ships its agent CLI as a .cmd wrapper on Windows. We try:
-//   1. CURSOR_AGENT_PATH env var (user override)
-//   2. `where agent` / `which agent` via the shell
-//   3. Well-known Windows fallback path
+//   1. CURSOR_AGENT_PATH env var (user override, used as-is)
+//   2. `cursor-agent` on PATH
+//   3. `agent` on PATH, only if its --version is a Cursor build
+//   4. Well-known Windows fallback path
+//
+// `agent` is not a unique name: other CLIs (Grok Build, personal dispatcher
+// scripts) install one too, and some of them answer --version with exit 0. So a
+// bare `agent` must prove it is Cursor before we drive it with Cursor's flags.
 
 const CURSOR_AGENT_WINDOWS_FALLBACK =
   "C:/Users/" +
   (process.env.USERNAME ?? process.env.USER ?? "WalshLab") +
   "/AppData/Local/cursor-agent/agent.cmd";
 
-function findCursorBinary() {
-  // User override always wins.
-  if (process.env.CURSOR_AGENT_PATH) {
-    return process.env.CURSOR_AGENT_PATH.replace(/\\/g, "/");
-  }
+// Cursor builds report a dated version, e.g. `2026.09.26-dd393fe`. Matched as a
+// prefix of the first line so a suffix or a following notice line still passes.
+const CURSOR_VERSION_PATTERN = /^v?\d{4}\.\d{2}\.\d{2}-[0-9a-f]+\b/i;
 
-  // Try `where` (Windows) / `which` (Unix) to find the binary on PATH.
-  const whereCmd = process.platform === "win32" ? "where agent" : "which agent";
+// The `agent` probe can take seconds, so within one companion process (e.g. an
+// --until-done loop) the PATH search runs once per PATH value.
+let cachedPathResolution = null;
+
+function whichBinary(name) {
+  const whereCmd = process.platform === "win32" ? `where ${name}` : `which ${name}`;
   try {
     const found = execSync(whereCmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] })
       .split(/\r?\n/)
       .filter(Boolean)[0];
-    if (found) {
-      return found.replace(/\\/g, "/");
-    }
+    return found ? found.replace(/\\/g, "/") : null;
   } catch {
-    // Not on PATH — fall through to hardcoded Windows path.
+    return null;
+  }
+}
+
+function locateCursorOnPath() {
+  const tried = [];
+
+  const cursorAgent = whichBinary("cursor-agent");
+  if (cursorAgent) return { cli: cursorAgent, tried };
+  tried.push("cursor-agent (not on PATH)");
+
+  const agent = whichBinary("agent");
+  if (agent) {
+    const probe = runCommand(agent, ["--version"], { timeout: 8000 });
+    const firstLine = (text) => String(text ?? "").trim().split(/\r?\n/)[0];
+    const version = firstLine(probe.stdout);
+    if (!probe.error && probe.status === 0 && CURSOR_VERSION_PATTERN.test(version)) {
+      return { cli: agent, tried };
+    }
+    // The output comes from an arbitrary binary on PATH; strip control sequences before display.
+    const seen = version || firstLine(probe.stderr) || String(probe.error?.message ?? `exited ${probe.status}`);
+    tried.push(`${agent} (not Cursor: --version gave '${sanitizeDiagnosticMessage(seen)}')`);
+  } else {
+    tried.push("agent (not on PATH)");
   }
 
   if (process.platform === "win32") {
-    return CURSOR_AGENT_WINDOWS_FALLBACK;
+    return { cli: CURSOR_AGENT_WINDOWS_FALLBACK, tried };
   }
+  return { cli: null, tried };
+}
 
-  // Non-Windows: return plain name and trust PATH.
-  return "agent";
+/**
+ * Locate the Cursor CLI. `cli` is null when nothing on PATH verifies as Cursor;
+ * `tried` lists each rejected candidate and why, for availability diagnostics.
+ *
+ * @returns {{ cli: string | null, tried: string[] }}
+ */
+function resolveCursorBinary() {
+  // User override always wins.
+  if (process.env.CURSOR_AGENT_PATH) {
+    return { cli: process.env.CURSOR_AGENT_PATH.replace(/\\/g, "/"), tried: [] };
+  }
+  const key = process.env.PATH ?? "";
+  if (cachedPathResolution?.key !== key) {
+    cachedPathResolution = { key, value: locateCursorOnPath() };
+  }
+  return cachedPathResolution.value;
+}
+
+function findCursorBinary() {
+  // Unresolved: fall back to the bare name so the spawn error names the CLI.
+  return resolveCursorBinary().cli ?? "cursor-agent";
 }
 
 // ─── Model IDs (informational) ────────────────────────────────────────────────
@@ -352,7 +402,14 @@ export function normalizeHeadlessOutcome({ events = [], stdoutText = "", stderr 
  * @returns {{ available: boolean, detail: string, version: string | null }}
  */
 export function getCursorAvailability() {
-  const cli = findCursorBinary();
+  const { cli, tried } = resolveCursorBinary();
+  if (!cli) {
+    return {
+      available: false,
+      detail: `Cursor agent CLI not found (tried: ${tried.join(", ")}).`,
+      version: null
+    };
+  }
   // runCommand, not execFileSync: Cursor ships a .cmd wrapper on Windows, which
   // execFile cannot launch without a shell. runCommand routes .bat/.cmd through
   // cmd.exe with quoted args and passes an argv array everywhere else, so the
@@ -362,9 +419,10 @@ export function getCursorAvailability() {
     const reason = result.error
       ? String(result.error.message ?? result.error)
       : (String(result.stderr).trim() || `exited ${result.status}`);
+    const skipped = tried.length ? ` Also tried: ${tried.join(", ")}.` : "";
     return {
       available: false,
-      detail: `Cursor agent CLI not found (tried: ${cli}). Error: ${reason}`,
+      detail: `Cursor agent CLI not found (tried: ${cli}). Error: ${reason}${skipped}`,
       version: null
     };
   }
