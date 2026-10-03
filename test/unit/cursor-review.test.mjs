@@ -110,7 +110,7 @@ test("executeTaskRun cursor review: Cursor runs in an empty throwaway workspace 
     assert.ok(!argv.includes("--trust"));
 
     const config = JSON.parse(readFileSync(join(record, "cli-config.json"), "utf8"));
-    for (const token of ["Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"]) {
+    for (const token of ["Read(**)", "Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"]) {
       assert.ok(config.permissions.deny.includes(token), `deny must include ${token}`);
     }
 
