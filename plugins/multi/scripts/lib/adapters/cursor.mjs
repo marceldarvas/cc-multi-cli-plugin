@@ -25,6 +25,9 @@
  */
 
 import { execSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import readline from "node:readline";
 import process from "node:process";
 
@@ -135,6 +138,7 @@ function findCursorBinary() {
 // ─── Role → headless flags ────────────────────────────────────────────────────
 
 const READ_ONLY_ROLES = new Set([
+  "review",
   "research",
   "researcher",
   "explore",
@@ -854,6 +858,50 @@ export async function cancelAcpCursor(jobId) {
     transport: "process-tree",
     detail: `No in-flight ACP turn in this process; Cursor ACP jobs are cancelled by killing the process tree (job ${jobId}).`
   };
+}
+
+// ─── Diff-only review ──────────────────────────────────────────────────────────
+//
+// `--mode ask` is not a boundary (the model still attempts edits and shell), and
+// a deny config alone is overridden by a reviewed repo's own `.cursor/cli.json`,
+// while its `.cursor/hooks.json` runs commands at session start. So a review
+// never sees the repo: Cursor runs in an empty throwaway workspace with a fresh
+// per-run config dir that denies every tool, and the diff arrives in the prompt.
+
+// Cursor's headless mode has no system-prompt flag, so these lead the prompt.
+const REVIEW_INSTRUCTIONS =
+  "You are a code reviewer. Review ONLY the diff below. There is no repository to read and your tools are disabled; " +
+  "everything you need is in the diff. Respond with your complete review in a single message. Focus on correctness, " +
+  "security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
+
+export const REVIEW_DENY_PERMISSIONS = ["Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"];
+
+/**
+ * Review a diff with Cursor, isolated from the repository it came from.
+ * Headless only: ACP is never used for reviews.
+ *
+ * @param {string} diffPrompt  the diff (and optional focus), as built by buildReviewPrompt
+ * @param {{ model?: string, env?: NodeJS.ProcessEnv, timeoutSec?: number, watchdogSlackSec?: number }} [options]
+ */
+export async function runCursorReview(diffPrompt, options = {}) {
+  const workspace = mkdtempSync(join(tmpdir(), "cursor-review-ws-"));
+  const configDir = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
+  try {
+    writeFileSync(
+      join(configDir, "cli-config.json"),
+      JSON.stringify({ version: 1, permissions: { allow: [], deny: REVIEW_DENY_PERMISSIONS } })
+    );
+    return await runHeadlessCursorTurn(workspace, `${REVIEW_INSTRUCTIONS}\n\n${diffPrompt}`, {
+      model: options.model,
+      role: "review",
+      timeoutSec: options.timeoutSec,
+      watchdogSlackSec: options.watchdogSlackSec,
+      env: { ...(options.env ?? process.env), CURSOR_CONFIG_DIR: configDir }
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+  }
 }
 
 // ─── Generic adapter interface ────────────────────────────────────────────────
