@@ -867,6 +867,8 @@ export async function cancelAcpCursor(jobId) {
 // while its `.cursor/hooks.json` runs commands at session start. So a review
 // never sees the repo: Cursor runs in an empty throwaway workspace with a fresh
 // per-run config dir that denies every tool, and the diff arrives in the prompt.
+// User-level config under $HOME/.cursor (hooks, MCP) still loads: Cursor reads
+// it from the home directory, and its login lives there too.
 
 // Cursor's headless mode has no system-prompt flag, so these lead the prompt.
 const REVIEW_INSTRUCTIONS =
@@ -874,7 +876,17 @@ const REVIEW_INSTRUCTIONS =
   "everything you need is in the diff. Respond with your complete review in a single message. Focus on correctness, " +
   "security, performance, and simplicity. Cite file:line, tag severity, be concise, and avoid nitpick spam.";
 
-export const REVIEW_DENY_PERMISSIONS = ["Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"];
+// Read is denied too: a review never needs a file, and a prompt-injected diff
+// could otherwise have Cursor read a file outside the workspace and quote it.
+export const REVIEW_DENY_PERMISSIONS = ["Read(**)", "Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"];
+
+/** Write the deny-everything Cursor CLI config a review runs under into `configDir`. */
+export function writeReviewConfig(configDir) {
+  writeFileSync(
+    join(configDir, "cli-config.json"),
+    JSON.stringify({ version: 1, permissions: { allow: [], deny: REVIEW_DENY_PERMISSIONS } })
+  );
+}
 
 /**
  * Review a diff with Cursor, isolated from the repository it came from.
@@ -885,12 +897,10 @@ export const REVIEW_DENY_PERMISSIONS = ["Shell(*)", "Shell(*:*)", "Write(**)", "
  */
 export async function runCursorReview(diffPrompt, options = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "cursor-review-ws-"));
-  const configDir = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
+  let configDir = null;
   try {
-    writeFileSync(
-      join(configDir, "cli-config.json"),
-      JSON.stringify({ version: 1, permissions: { allow: [], deny: REVIEW_DENY_PERMISSIONS } })
-    );
+    configDir = mkdtempSync(join(tmpdir(), "cursor-review-cfg-"));
+    writeReviewConfig(configDir);
     return await runHeadlessCursorTurn(workspace, `${REVIEW_INSTRUCTIONS}\n\n${diffPrompt}`, {
       model: options.model,
       role: "review",
@@ -900,7 +910,7 @@ export async function runCursorReview(diffPrompt, options = {}) {
     });
   } finally {
     rmSync(workspace, { recursive: true, force: true });
-    rmSync(configDir, { recursive: true, force: true });
+    if (configDir) rmSync(configDir, { recursive: true, force: true });
   }
 }
 
