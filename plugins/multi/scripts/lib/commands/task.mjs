@@ -113,6 +113,84 @@ export function evaluateAutonomousStop(turnResult, { untilDone, turnCount, maxTu
   return null;
 }
 
+// Diff-only Cursor review: the diff is the whole input, so git/empty-diff
+// outcomes are settled before Cursor's availability is checked.
+async function executeCursorReview(request, workspaceRoot, taskMetadata) {
+  if (request.write) throw new Error("Cursor review is read-only; --write is unsupported.");
+  if (request.untilDone) throw new Error("Cursor review is single-shot; --until-done is unsupported.");
+  if (request.resumeLast) throw new Error("Cursor review has no sessions; --resume-last is unsupported.");
+
+  const diffResult = resolveReviewDiff(workspaceRoot, request.base, "Cursor");
+  if (diffResult.isEmpty) return emptyReviewResult(request, taskMetadata);
+
+  const cursorAvail = cursor.adapter.isAvailable();
+  if (!cursorAvail.available) {
+    throw new Error(`Cursor agent CLI is not available: ${cursorAvail.detail}. Install Cursor from https://cursor.com or set CURSOR_AGENT_PATH.`);
+  }
+
+  const result = await cursor.runCursorReview(buildReviewPrompt(diffResult.diff, { focus: request.prompt }), {
+    model: request.model ?? undefined,
+    timeoutSec: request.timeoutSec,
+    env: request.env
+  });
+
+  const rawOutput = typeof result.text === "string" ? result.text : "";
+  const failureMessage = formatAdapterError(result.error);
+  const exitStatus = result.status === 0 && rawOutput.trim().length > 0 ? 0 : 1;
+  const rendered = renderTaskResult(
+    { rawOutput, failureMessage, reasoningSummary: [] },
+    { title: taskMetadata.title, jobId: request.jobId ?? null, write: false }
+  );
+  const payload = { status: exitStatus, threadId: null, rawOutput, touchedFiles: [], reasoningSummary: [] };
+  return {
+    exitStatus,
+    threadId: null,
+    turnId: null,
+    payload,
+    rendered,
+    summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+    jobTitle: taskMetadata.title,
+    jobClass: "task",
+    write: false
+  };
+}
+
+// Resolves the diff a review CLI is handed, mapping git edge cases to
+// user-facing errors that name the reviewing CLI.
+function resolveReviewDiff(workspaceRoot, base, cliLabel) {
+  try {
+    return resolveDiff({ cwd: workspaceRoot, base: base ?? undefined });
+  } catch (e) {
+    if (e instanceof NotAGitRepoError) throw new Error(`${cliLabel} review needs a git repository.`);
+    if (e instanceof NoCommitsError) throw new Error(`${cliLabel} review needs at least one commit.`);
+    if (e instanceof BaseRefNotFoundError) throw new Error(`${cliLabel} review base ref not found: ${base}`);
+    if (e instanceof NoMergeBaseError) throw new Error(`${cliLabel} review: no common history with base ${base}.`);
+    throw e;
+  }
+}
+
+// A clean "nothing to review" result, returned without spawning any CLI.
+function emptyReviewResult(request, taskMetadata) {
+  const rawOutput = `No changes to review${request.base ? ` since ${request.base}` : ""}.`;
+  const exitStatus = 0;
+  const rendered = renderTaskResult(
+    { rawOutput, failureMessage: "", reasoningSummary: [] },
+    { title: taskMetadata.title, jobId: request.jobId ?? null, write: false }
+  );
+  const payload = { status: exitStatus, threadId: null, rawOutput, touchedFiles: [], reasoningSummary: [] };
+  return {
+    exitStatus,
+    threadId: null,
+    turnId: null,
+    payload,
+    rendered,
+    summary: rawOutput,
+    jobTitle: taskMetadata.title,
+    jobClass: "task",
+    write: false
+  };
+}
+
 export async function executeTaskRun(request) {
   const workspaceRoot = resolveWorkspaceRoot(request.cwd);
   const cli = request.cli ?? "codex";
@@ -129,6 +207,10 @@ export async function executeTaskRun(request) {
   // adapter can pick the right --mode/flags. Supports --until-done by looping
   // headless --resume turns on the returned session_id, sharing the autonomous
   // stop logic with the codex path via evaluateAutonomousStop().
+  if (cli === "cursor" && request.role === "review") {
+    return executeCursorReview(request, workspaceRoot, taskMetadata);
+  }
+
   if (cli === "cursor") {
     const cursorAvail = cursor.adapter.isAvailable();
     if (!cursorAvail.available) {
@@ -485,40 +567,10 @@ export async function executeTaskRun(request) {
     if (request.untilDone) throw new Error("Cline is read-only single-shot; --until-done is unsupported.");
     if (request.resumeLast) throw new Error("Cline has no sessions; --resume-last is unsupported.");
 
-    // Resolve the diff to review. Git/empty-diff outcomes do not need the
-    // Cline binary — Cloud Agents and `npm test` have no CLIs on PATH.
-    let diffResult;
-    try {
-      diffResult = resolveDiff({ cwd: workspaceRoot, base: request.base ?? undefined });
-    } catch (e) {
-      if (e instanceof NotAGitRepoError) throw new Error("Cline review needs a git repository.");
-      if (e instanceof NoCommitsError) throw new Error("Cline review needs at least one commit.");
-      if (e instanceof BaseRefNotFoundError) throw new Error(`Cline review base ref not found: ${request.base}`);
-      if (e instanceof NoMergeBaseError) throw new Error(`Cline review: no common history with base ${request.base}.`);
-      throw e;
-    }
-
-    // Empty diff: return a clean result without spawning cline.
-    if (diffResult.isEmpty) {
-      const rawOutput = `No changes to review${request.base ? ` since ${request.base}` : ""}.`;
-      const exitStatus = 0;
-      const rendered = renderTaskResult(
-        { rawOutput, failureMessage: "", reasoningSummary: [] },
-        { title: taskMetadata.title, jobId: request.jobId ?? null, write: false }
-      );
-      const payload = { status: exitStatus, threadId: null, rawOutput, touchedFiles: [], reasoningSummary: [] };
-      return {
-        exitStatus,
-        threadId: null,
-        turnId: null,
-        payload,
-        rendered,
-        summary: rawOutput,
-        jobTitle: taskMetadata.title,
-        jobClass: "task",
-        write: false
-      };
-    }
+    // Git/empty-diff outcomes do not need the Cline binary — Cloud Agents and
+    // `npm test` have no CLIs on PATH.
+    const diffResult = resolveReviewDiff(workspaceRoot, request.base, "Cline");
+    if (diffResult.isEmpty) return emptyReviewResult(request, taskMetadata);
 
     const clineAvail = cline.adapter.isAvailable();
     if (!clineAvail.available) {
@@ -943,10 +995,15 @@ export async function handleTask(argv, context = {}) {
     cli
   });
 
+  // Diff reviews take the diff as their input, so focus text is optional, and a
+  // Cursor review checks availability only after the diff proves non-empty.
+  const isCursorReview = cli === "cursor" && options.role === "review";
+  const promptOptional = cli === "cline" || isCursorReview;
+
   if (options.background) {
     if (cli === "codex") {
       ensureCodexAvailable(cwd);
-    } else {
+    } else if (!isCursorReview) {
       // For non-codex CLIs, check binary availability via the adapter registry.
       const adapterMod = getAdapter(cli);
       const avail = (adapterMod.adapter ?? adapterMod).isAvailable?.();
@@ -954,7 +1011,7 @@ export async function handleTask(argv, context = {}) {
         throw new Error(`${cli} CLI is not available: ${avail.detail}`);
       }
     }
-    if (cli !== "cline") requireTaskRequest(prompt, resumeLast);
+    if (!promptOptional) requireTaskRequest(prompt, resumeLast);
 
     const probeRequest = buildTaskRequest({
       cwd,
@@ -1001,7 +1058,7 @@ export async function handleTask(argv, context = {}) {
     return;
   }
 
-  if (cli !== "cline") requireTaskRequest(prompt, resumeLast);
+  if (!promptOptional) requireTaskRequest(prompt, resumeLast);
 
   const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
   await runForegroundCommand(
