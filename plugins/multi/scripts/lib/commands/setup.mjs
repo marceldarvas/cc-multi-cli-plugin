@@ -59,7 +59,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   }
   const cursorCli = clis.find((entry) => entry.name === "cursor");
   if (cursorCli && !cursorCli.available) {
-    nextSteps.push("Cursor: install the Cursor CLI (`cursor-agent`) from https://cursor.com/install, or set CURSOR_AGENT_PATH. Adds /cursor:delegate, /cursor:research, /cursor:explore.");
+    nextSteps.push("Cursor: install the Cursor CLI (`cursor-agent`) from https://cursor.com/install, or set CURSOR_AGENT_PATH. Adds /cursor:delegate, /cursor:research, /cursor:explore, /cursor:review.");
   }
   const antigravityCli = clis.find((entry) => entry.name === "antigravity");
   if (antigravityCli && !antigravityCli.available) {

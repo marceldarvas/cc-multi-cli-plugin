@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeClineResult, adapter, buildArgs, buildReviewPrompt } from "../../plugins/multi/scripts/lib/adapters/cline.mjs";
+import { normalizeClineResult, adapter, buildArgs } from "../../plugins/multi/scripts/lib/adapters/cline.mjs";
+import { buildReviewPrompt } from "../../plugins/multi/scripts/lib/adapters/review-diff.mjs";
 
 const fx = (n) => readFileSync(new URL(`../fixtures/${n}`, import.meta.url), "utf8");
 

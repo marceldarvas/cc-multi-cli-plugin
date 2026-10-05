@@ -8,9 +8,9 @@ import { join } from "node:path";
 
 import { git } from "../../plugins/multi/scripts/lib/adapters/cline-git.mjs";
 import { executeTaskRun } from "../../plugins/multi/scripts/lib/commands/task.mjs";
-import { buildReviewPrompt } from "../../plugins/multi/scripts/lib/adapters/cline.mjs";
+import { buildReviewPrompt } from "../../plugins/multi/scripts/lib/adapters/review-diff.mjs";
 
-// ── git repo helpers (mirror cline-diff.test.mjs) ──────────────────────────────
+// ── git repo helpers (mirror review-diff.test.mjs) ──────────────────────────────
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), "clr-rev-"));

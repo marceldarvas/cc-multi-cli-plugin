@@ -4,7 +4,7 @@ Orientation for AI agents (Claude, Codex, Cursor Cloud Agents) working in this r
 
 ## This fork
 
-This is **marceldarvas/cc-multi-cli-plugin**, a fork of [greenpolo/cc-multi-cli-plugin](https://github.com/greenpolo/cc-multi-cli-plugin). The live CLI set is **Codex, Cursor, Antigravity, OpenCode, and Cline**. Cursor is the upstream provider (`/cursor:delegate`, `/cursor:research`, `/cursor:explore`). Cline is this fork's addition (`/cline:review` only). Do not drop Cursor to "make room" for Cline.
+This is **marceldarvas/cc-multi-cli-plugin**, a fork of [greenpolo/cc-multi-cli-plugin](https://github.com/greenpolo/cc-multi-cli-plugin). The live CLI set is **Codex, Cursor, Antigravity, OpenCode, and Cline**. Cursor is the upstream provider (`/cursor:delegate`, `/cursor:research`, `/cursor:explore`), plus this fork's `/cursor:review`. Cline is this fork's addition (`/cline:review` only). Do not drop Cursor to "make room" for Cline.
 
 Cursor Cloud Agents also work **on** this repo. That is a separate concern from the Cursor CLI provider the plugin delegates to.
 

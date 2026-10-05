@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { git } from '../../plugins/multi/scripts/lib/adapters/cline-git.mjs';
-import { resolveDiff, NotAGitRepoError, BaseRefNotFoundError, NoCommitsError } from '../../plugins/multi/scripts/lib/adapters/cline-diff.mjs';
+import { resolveDiff, NotAGitRepoError, BaseRefNotFoundError, NoCommitsError } from '../../plugins/multi/scripts/lib/adapters/review-diff.mjs';
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), 'clr-'));
@@ -141,7 +141,7 @@ test('resolves the index path independently of the process cwd', () => {
   writeFileSync(join(dir, 'a.js'), 'y\n');
   writeFileSync(join(dir, 'untracked.js'), 'const n = 1;\n');
   const elsewhere = mkdtempSync(join(tmpdir(), 'clr-cwd-'));
-  const mod = pathToFileURL(fileURLToPath(new URL('../../plugins/multi/scripts/lib/adapters/cline-diff.mjs', import.meta.url))).href;
+  const mod = pathToFileURL(fileURLToPath(new URL('../../plugins/multi/scripts/lib/adapters/review-diff.mjs', import.meta.url))).href;
   try {
     const r = spawnSync(process.execPath, ['--input-type=module', '-e',
       `import { resolveDiff } from ${JSON.stringify(mod)};\n` +
@@ -158,7 +158,7 @@ test('resolves the index path independently of the process cwd', () => {
 });
 
 test('resolveDiff builds a temp GIT_INDEX_FILE from HEAD, never copying the real index', () => {
-  const src = readFileSync(fileURLToPath(new URL('../../plugins/multi/scripts/lib/adapters/cline-diff.mjs', import.meta.url)), 'utf8');
+  const src = readFileSync(fileURLToPath(new URL('../../plugins/multi/scripts/lib/adapters/review-diff.mjs', import.meta.url)), 'utf8');
   assert.match(src, /GIT_INDEX_FILE/);
   assert.match(src, /read-tree/);
   assert.match(src, /add['"\s,]+-N/);
