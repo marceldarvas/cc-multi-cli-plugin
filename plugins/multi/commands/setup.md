@@ -38,7 +38,7 @@ Tabulate which succeed. For each failure, tell the user the install command:
 - Cursor: `curl https://cursor.com/install -fsS | bash` (Unix) or `irm 'https://cursor.com/install?win32=true' | iex` (Windows PowerShell). After install, the binary lives at `$LOCALAPPDATA/cursor-agent/agent.cmd` on Windows and is not on PATH.
 - Antigravity: install the **`agy` CLI** from https://antigravity.google, then run `agy` once interactively to sign in with your Google account. The desktop app is not required.
 - OpenCode: `npm install -g opencode-ai`.
-- Cline: install the `cline` CLI from https://github.com/cline/cline and configure `cline-pass` / `glm-5.2`.
+- Cline: install the `cline` CLI from https://github.com/cline/cline and configure `cline-pass` / `deepseek-v4.1-flash`.
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
 
