@@ -1,6 +1,6 @@
 {
   "name": "cline",
-  "description": "Read-only second-opinion code review via the Cline CLI (DeepSeek-V4-Flash). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
+  "description": "Read-only second-opinion code review via the Cline CLI (DeepSeek-V4.1-Flash). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
   "version": "0.1.2",
   "author": {
     "name": "Marcel Darvas",

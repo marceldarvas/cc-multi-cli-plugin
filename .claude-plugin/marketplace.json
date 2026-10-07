@@ -56,7 +56,7 @@
     },
     {
       "name": "cline",
-      "description": "Adds /cline:review (read-only second-opinion code review; DeepSeek-V4-Flash via the Cline CLI). Requires multi.",
+      "description": "Adds /cline:review (read-only second-opinion code review; DeepSeek-V4.1-Flash via the Cline CLI). Requires multi.",
       "version": "0.1.2",
       "author": {
         "name": "Marcel Darvas"
