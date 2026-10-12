@@ -15,8 +15,8 @@
  *
  * Roles map to flags (not to /slash prefixes as the old ACP path did):
  *   delegate / writer / debugger → default agent mode + --force --trust  (writes)
- *   research / researcher        → --mode ask --force                    (read-only + web)
- *   explore / explorer / ask     → --mode ask --force                    (read-only)
+ *   research / researcher        → --mode ask --force --trust            (read-only + web)
+ *   explore / explorer / ask     → --mode ask --force --trust            (read-only)
  *
  * Headless replaces the previous `agent acp` (ACP JSON-RPC) transport, which on
  * this CLI carried two upstream bugs: MCP tool-calls silently stopped firing
@@ -178,7 +178,10 @@ export function buildHeadlessArgs({ role = "delegate", model, sessionId, cwd, ou
   if (isReadOnlyRole(role)) {
     // Read-only Q&A/planning. --force keeps the built-in WebFetch tool from
     // stalling on the approval gate; --mode ask refuses edits even under --force.
-    args.push("--mode", "ask", "--force");
+    // --trust answers the workspace-trust gate, which is a separate prompt from
+    // tool approval: these roles run in throwaway dirs Cursor has never seen, so
+    // without it every run blocks on an unanswerable prompt until it times out.
+    args.push("--mode", "ask", "--force", "--trust");
   } else {
     // Default agent mode: full tools incl. write + shell. --force auto-approves
     // tool execution; --trust (headless-only) trusts the workspace without a prompt.

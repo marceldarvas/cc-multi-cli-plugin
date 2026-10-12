@@ -49,12 +49,17 @@ test("buildHeadlessArgs: delegate uses agent mode (force+trust) and stream-json"
   assert.ok(!args.includes("--mode"), "delegate must not set --mode");
 });
 
-test("buildHeadlessArgs: research uses --mode ask + --force + json (no --trust)", () => {
+test("buildHeadlessArgs: research uses --mode ask + --force + --trust + json", () => {
   const args = buildHeadlessArgs({ role: "research", cwd: "/work" });
   assert.deepEqual(args, [
-    "-p", "--output-format", "json", "--model", "auto", "--mode", "ask", "--force", "--workspace", "/work"
+    "-p", "--output-format", "json", "--model", "auto",
+    "--mode", "ask", "--force", "--trust", "--workspace", "/work"
   ]);
-  assert.ok(!args.includes("--trust"));
+  // Read-only roles need --trust too. Workspace trust is a prompt separate from
+  // tool approval, and these roles run in dirs Cursor has never seen, so dropping
+  // it makes every run hang on an unanswerable prompt until the watchdog fires.
+  // --mode ask, not the missing --trust, is what keeps these roles from writing.
+  assert.ok(args.includes("--trust"), "read-only roles must pre-answer workspace trust");
   assert.ok(!args.includes("--stream-partial-output"));
 });
 

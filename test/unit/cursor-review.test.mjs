@@ -107,7 +107,9 @@ test("executeTaskRun cursor review: Cursor runs in an empty throwaway workspace 
     assert.deepEqual(argv.slice(argv.indexOf("--mode"), argv.indexOf("--mode") + 2), ["--mode", "ask"]);
     assert.ok(argv.includes("--force"));
     assert.ok(!argv.includes("--approve-mcps"));
-    assert.ok(!argv.includes("--trust"));
+    // The throwaway workspace is untrusted by construction, so the run needs
+    // --trust to start at all; the deny-all config below is what constrains it.
+    assert.ok(argv.includes("--trust"));
 
     const config = JSON.parse(readFileSync(join(record, "cli-config.json"), "utf8"));
     for (const token of ["Read(**)", "Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"]) {
