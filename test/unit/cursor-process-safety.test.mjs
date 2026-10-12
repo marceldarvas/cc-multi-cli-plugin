@@ -90,12 +90,23 @@ test("the Cursor child stays in the worker's process group so cancel can reach i
   let childPgid = null;
   try {
     await withCursorPath(path, async () => {
-      const turn = runHeadlessCursorTurn(cwd, "hello", { timeoutSec: 1, watchdogSlackSec: 0 });
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      const found = execFileSync("ps", ["-eo", "pid=,pgid=,command="], { encoding: "utf8" })
-        .split("\n")
-        .find((line) => line.includes(path));
-      if (found) childPgid = found.trim().split(/\s+/)[1];
+      // The child is only visible between spawn and the watchdog kill, so poll
+      // for as long as it could exist rather than sampling one instant: a lone
+      // check at 300ms missed it on a machine busy with live CLI runs and
+      // failed the test for a reason that had nothing to do with process groups.
+      let settled = false;
+      const turn = runHeadlessCursorTurn(cwd, "hello", { timeoutSec: 1, watchdogSlackSec: 0 })
+        .finally(() => {
+          settled = true;
+        });
+      const deadline = Date.now() + 5000;
+      while (childPgid === null && !settled && Date.now() < deadline) {
+        const found = execFileSync("ps", ["-eo", "pid=,pgid=,command="], { encoding: "utf8" })
+          .split("\n")
+          .find((line) => line.includes(path));
+        if (found) childPgid = found.trim().split(/\s+/)[1];
+        else await new Promise((resolve) => setTimeout(resolve, 25));
+      }
       await turn;
     });
     assert.notEqual(childPgid, null, "could not locate the spawned stub to read its process group");
