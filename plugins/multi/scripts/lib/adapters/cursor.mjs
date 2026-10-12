@@ -15,8 +15,8 @@
  *
  * Roles map to flags (not to /slash prefixes as the old ACP path did):
  *   delegate / writer / debugger → default agent mode + --force --trust  (writes)
- *   research / researcher        → --mode ask --force                    (read-only + web)
- *   explore / explorer / ask     → --mode ask --force                    (read-only)
+ *   research / researcher        → --mode ask --force --trust            (read-only + web)
+ *   explore / explorer / ask     → --mode ask --force --trust            (read-only)
  *
  * Headless replaces the previous `agent acp` (ACP JSON-RPC) transport, which on
  * this CLI carried two upstream bugs: MCP tool-calls silently stopped firing
@@ -178,7 +178,13 @@ export function buildHeadlessArgs({ role = "delegate", model, sessionId, cwd, ou
   if (isReadOnlyRole(role)) {
     // Read-only Q&A/planning. --force keeps the built-in WebFetch tool from
     // stalling on the approval gate; --mode ask refuses edits even under --force.
-    args.push("--mode", "ask", "--force");
+    // --trust answers the workspace-trust gate, which is a separate prompt from
+    // tool approval. Without it a run blocks forever on an unanswerable prompt in
+    // any directory Cursor holds no trust record for: review's throwaway
+    // workspace always, and the caller's own repo unless it has been opened in
+    // Cursor. What keeps the role read-only is --mode ask (plus review's deny-all
+    // cli-config.json), never the absence of this flag.
+    args.push("--mode", "ask", "--force", "--trust");
   } else {
     // Default agent mode: full tools incl. write + shell. --force auto-approves
     // tool execution; --trust (headless-only) trusts the workspace without a prompt.
@@ -880,10 +886,32 @@ const REVIEW_INSTRUCTIONS =
 // could otherwise have Cursor read a file outside the workspace and quote it.
 export const REVIEW_DENY_PERMISSIONS = ["Read(**)", "Shell(*)", "Shell(*:*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"];
 
-// Review temp dirs are named `<prefix><owner pid>-<random>`.
+// Explore/research read the caller's own repo, so Read stays allowed — but
+// `Read(**)` is workspace-relative, and --force auto-approves anything no rule
+// denies. Read(/**) closes that: without it a prompt-injected repo file can have
+// Cursor read ~/.ssh or a sibling checkout by absolute path and quote it back.
+// A `../` traversal needs no entry of its own (the path is resolved before the
+// rule is matched), and writes outside the workspace are refused without a
+// Write(/**) counterpart, so neither is missing here. All probed on
+// cursor-agent 2026.10.01. WebFetch is denied per role below.
+//
+// Known gap, not closable from here: denying WebFetch(*) does not cut Cursor
+// off from the web. Under exactly this set it still answered a question that
+// needed the live web and cited the page it read, so some web route is not
+// gated by the WebFetch permission, there is no token for it among Cursor's
+// five (Shell/Read/Write/WebFetch/Mcp), and cursor-agent has no
+// tool-restriction flag. An injected repo file could still carry repo text out
+// in a search query. Explore is for a repo you trust.
+export const READ_ONLY_DENY_PERMISSIONS = ["Read(/**)", "Write(**)", "Shell(*)", "Shell(*:*)", "Mcp(*:*)"];
+
+// Roles whose job includes the live web; every other read-only role is denied it.
+const WEB_ROLES = new Set(["research", "researcher"]);
+
+// Cursor temp dirs are named `<prefix><owner pid>-<random>`.
 const REVIEW_WORKSPACE_PREFIX = "cursor-review-ws-";
 const REVIEW_CONFIG_PREFIX = "cursor-review-cfg-";
-const REVIEW_DIR_PATTERN = /^cursor-review-(?:ws|cfg)-(\d+)-/;
+const READ_ONLY_CONFIG_PREFIX = "cursor-readonly-cfg-";
+const TEMP_DIR_PATTERN = /^cursor-(?:review-(?:ws|cfg)|readonly-cfg)-(\d+)-/;
 
 function processIsAlive(pid) {
   try {
@@ -895,11 +923,11 @@ function processIsAlive(pid) {
   }
 }
 
-// A cancelled background review is killed outright, so its `finally` never
-// runs and its temp dirs (the config dir holds Cursor's transcript of the
-// diff) stay behind. Each review removes dirs whose owning process is gone;
-// a live review's dirs are never touched, however long it has been running.
-function sweepOrphanedReviewDirs() {
+// A cancelled background turn is killed outright, so its `finally` never runs
+// and its temp dirs (a review's config dir holds Cursor's transcript of the
+// diff) stay behind. Each new turn removes dirs whose owning process is gone;
+// a live turn's dirs are never touched, however long it has been running.
+function sweepOrphanedCursorDirs() {
   const root = tmpdir();
   let entries;
   try {
@@ -908,7 +936,7 @@ function sweepOrphanedReviewDirs() {
     return;
   }
   for (const name of entries) {
-    const owner = REVIEW_DIR_PATTERN.exec(name);
+    const owner = TEMP_DIR_PATTERN.exec(name);
     if (!owner || processIsAlive(Number(owner[1]))) continue;
     try {
       rmSync(join(root, name), { recursive: true, force: true });
@@ -927,6 +955,30 @@ export function writeReviewConfig(configDir) {
 }
 
 /**
+ * Write the read-only Cursor CLI config an explore/research turn runs under.
+ * Reads of the workspace stay allowed because that is the lane's whole job.
+ *
+ * This is defence in depth, not a boundary: a repo's own `.cursor/cli.json` can
+ * re-allow what this denies (probed — a project `allow` beat this `deny`), and
+ * `--mode ask` remains what actually keeps the role from writing.
+ */
+export function writeReadOnlyConfig(configDir, role) {
+  const normalized = String(role ?? "").toLowerCase();
+  // A review reads nothing: the diff arrives in the prompt, so it gets the
+  // deny-everything set instead of this lane's workspace-read allowance.
+  if (normalized === "review") return writeReviewConfig(configDir);
+  const web = WEB_ROLES.has(normalized);
+  const deny = web ? READ_ONLY_DENY_PERMISSIONS : [...READ_ONLY_DENY_PERMISSIONS, "WebFetch(*)"];
+  writeFileSync(
+    join(configDir, "cli-config.json"),
+    JSON.stringify({
+      version: 1,
+      permissions: { allow: web ? ["Read(**)", "WebFetch(*)"] : ["Read(**)"], deny }
+    })
+  );
+}
+
+/**
  * Review a diff with Cursor, isolated from the repository it came from.
  * Headless only: ACP is never used for reviews.
  *
@@ -934,7 +986,7 @@ export function writeReviewConfig(configDir) {
  * @param {{ model?: string, env?: NodeJS.ProcessEnv, timeoutSec?: number, watchdogSlackSec?: number }} [options]
  */
 export async function runCursorReview(diffPrompt, options = {}) {
-  sweepOrphanedReviewDirs();
+  sweepOrphanedCursorDirs();
   const workspace = mkdtempSync(join(tmpdir(), `${REVIEW_WORKSPACE_PREFIX}${process.pid}-`));
   let configDir = null;
   try {
@@ -955,15 +1007,37 @@ export async function runCursorReview(diffPrompt, options = {}) {
 
 // ─── Generic adapter interface ────────────────────────────────────────────────
 
-/**
- * Transport-dispatching invoke: ACP when MULTI_TRANSPORT_CURSOR=acp, else the
- * unchanged headless path. The default (no flag) is byte-identical to today.
- */
-export async function invokeCursor(cwd, prompt, options = {}) {
+/** ACP when MULTI_TRANSPORT_CURSOR=acp, else the headless path. */
+function dispatchCursorTurn(cwd, prompt, options) {
   if (cursorTransport(options.env ?? process.env) === "acp") {
     return runAcpCursorTurn(cwd, prompt, options);
   }
   return runHeadlessCursorTurn(cwd, prompt, options);
+}
+
+/**
+ * Transport-dispatching invoke. A read-only role also gets a per-run config dir
+ * holding the deny list above, so the lane is held read-only by configuration
+ * and not by `--mode ask` alone. A caller that passes its own config dir keeps
+ * it (that is how a review carries the deny-everything config it chose), and
+ * write roles are untouched.
+ */
+export async function invokeCursor(cwd, prompt, options = {}) {
+  const env = options.env ?? process.env;
+  // Only a config dir the caller passed counts as its choice. Honouring an
+  // ambient CURSOR_CONFIG_DIR here would let a stray exported var silently
+  // drop the deny set, which is indistinguishable from a deliberate override.
+  if (!isReadOnlyRole(options.role ?? "delegate") || options.env?.CURSOR_CONFIG_DIR) {
+    return dispatchCursorTurn(cwd, prompt, options);
+  }
+  sweepOrphanedCursorDirs();
+  const configDir = mkdtempSync(join(tmpdir(), `${READ_ONLY_CONFIG_PREFIX}${process.pid}-`));
+  try {
+    writeReadOnlyConfig(configDir, options.role);
+    return await dispatchCursorTurn(cwd, prompt, { ...options, env: { ...env, CURSOR_CONFIG_DIR: configDir } });
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
 }
 
 /** Transport-dispatching cancel: ACP routing when the flag selects acp. */

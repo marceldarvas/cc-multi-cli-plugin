@@ -21,6 +21,7 @@ The plugin stores the following on your local disk only:
 - **Per-CLI state** at `~/.claude/plugins/cc-multi-cli-plugin/state/<workspace-hash>/` — job records (job IDs, statuses, working directories, log file paths) for background tasks the plugin tracks. This is local-only state used to support `/codex:status`, `/codex:result`, etc.
 - **Job log files** at `~/.claude/plugins/cc-multi-cli-plugin/state/<workspace-hash>/logs/` — stderr output from companion jobs, retained for diagnostics.
 - **Cursor allowlist additions** to `~/.cursor/cli-config.json` — the plugin appends permissive entries (`Shell(*)`, `Read/Write/Edit(**)`, `MCP(*)`) so Cursor's permission gate doesn't stall in headless ACP mode. You can edit, tighten, or remove these entries at any time; the plugin only ever appends, never overwrites your existing entries.
+- **Cursor workspace-trust records** at `~/.cursor/projects/<escaped-path>/.workspace-trusted` — Cursor writes one of these for every directory the plugin runs a headless turn in, because the plugin passes `--trust` to answer the workspace-trust prompt that would otherwise block a headless run forever. The record is Cursor's, lives outside any config dir the plugin manages, and is not removed when a run ends, so a directory stays trusted for later Cursor use including the GUI. Delete any you don't want; Cursor re-creates one the next time a turn runs there.
 
 You can delete any or all of these directories at any time. The plugin will recreate the structures it needs on next use.
 

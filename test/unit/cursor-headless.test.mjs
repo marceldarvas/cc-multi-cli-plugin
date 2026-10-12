@@ -49,13 +49,29 @@ test("buildHeadlessArgs: delegate uses agent mode (force+trust) and stream-json"
   assert.ok(!args.includes("--mode"), "delegate must not set --mode");
 });
 
-test("buildHeadlessArgs: research uses --mode ask + --force + json (no --trust)", () => {
+test("buildHeadlessArgs: research uses --mode ask + --force + --trust + json", () => {
   const args = buildHeadlessArgs({ role: "research", cwd: "/work" });
   assert.deepEqual(args, [
-    "-p", "--output-format", "json", "--model", "auto", "--mode", "ask", "--force", "--workspace", "/work"
+    "-p", "--output-format", "json", "--model", "auto",
+    "--mode", "ask", "--force", "--trust", "--workspace", "/work"
   ]);
-  assert.ok(!args.includes("--trust"));
+  // Read-only roles need --trust too. Workspace trust is a prompt separate from
+  // tool approval, and these roles run in dirs Cursor has never seen, so dropping
+  // it makes every run hang on an unanswerable prompt until the watchdog fires.
+  // --mode ask, not the missing --trust, is what keeps these roles from writing.
+  assert.ok(args.includes("--trust"), "read-only roles must pre-answer workspace trust");
   assert.ok(!args.includes("--stream-partial-output"));
+});
+
+test("buildHeadlessArgs: every read-only alias is held read-only by --mode ask", () => {
+  // The guard that constrains these roles is --mode ask, so pin it across all
+  // aliases rather than trusting the two spelled-out cases below. --trust only
+  // answers the workspace prompt; asserting its absence pinned nothing.
+  for (const role of ["review", "research", "researcher", "explore", "explorer", "ask", "planner", "plan"]) {
+    const args = buildHeadlessArgs({ role, cwd: "/work" });
+    assert.equal(args[args.indexOf("--mode") + 1], "ask", `${role} must run in ask mode`);
+  }
+  assert.ok(!buildHeadlessArgs({ role: "delegate", cwd: "/work" }).includes("--mode"));
 });
 
 test("buildHeadlessArgs: explore mirrors research (read-only ask mode)", () => {
