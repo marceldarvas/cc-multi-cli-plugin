@@ -179,8 +179,11 @@ export function buildHeadlessArgs({ role = "delegate", model, sessionId, cwd, ou
     // Read-only Q&A/planning. --force keeps the built-in WebFetch tool from
     // stalling on the approval gate; --mode ask refuses edits even under --force.
     // --trust answers the workspace-trust gate, which is a separate prompt from
-    // tool approval: these roles run in throwaway dirs Cursor has never seen, so
-    // without it every run blocks on an unanswerable prompt until it times out.
+    // tool approval. Without it a run blocks forever on an unanswerable prompt in
+    // any directory Cursor holds no trust record for: review's throwaway
+    // workspace always, and the caller's own repo unless it has been opened in
+    // Cursor. What keeps the role read-only is --mode ask (plus review's deny-all
+    // cli-config.json), never the absence of this flag.
     args.push("--mode", "ask", "--force", "--trust");
   } else {
     // Default agent mode: full tools incl. write + shell. --force auto-approves

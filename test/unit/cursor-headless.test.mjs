@@ -63,6 +63,17 @@ test("buildHeadlessArgs: research uses --mode ask + --force + --trust + json", (
   assert.ok(!args.includes("--stream-partial-output"));
 });
 
+test("buildHeadlessArgs: every read-only alias is held read-only by --mode ask", () => {
+  // The guard that constrains these roles is --mode ask, so pin it across all
+  // aliases rather than trusting the two spelled-out cases below. --trust only
+  // answers the workspace prompt; asserting its absence pinned nothing.
+  for (const role of ["review", "research", "researcher", "explore", "explorer", "ask", "planner", "plan"]) {
+    const args = buildHeadlessArgs({ role, cwd: "/work" });
+    assert.equal(args[args.indexOf("--mode") + 1], "ask", `${role} must run in ask mode`);
+  }
+  assert.ok(!buildHeadlessArgs({ role: "delegate", cwd: "/work" }).includes("--mode"));
+});
+
 test("buildHeadlessArgs: explore mirrors research (read-only ask mode)", () => {
   const args = buildHeadlessArgs({ role: "explore", cwd: "/work" });
   assert.ok(args.includes("--mode") && args[args.indexOf("--mode") + 1] === "ask");
