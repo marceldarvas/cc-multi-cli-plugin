@@ -41,12 +41,15 @@ function stubCursor(recordDir) {
   return { bin, path };
 }
 
-async function launch(role, env) {
+async function launch(role, { env, ambientConfigDir } = {}) {
   const rec = mkdtempSync(join(tmpdir(), "ro-rec-"));
   const stub = stubCursor(rec);
   const cwd = mkdtempSync(join(tmpdir(), "ro-cwd-"));
-  const previous = process.env.CURSOR_AGENT_PATH;
+  const previousAgent = process.env.CURSOR_AGENT_PATH;
+  const previousConfig = process.env.CURSOR_CONFIG_DIR;
   process.env.CURSOR_AGENT_PATH = stub.path;
+  if (ambientConfigDir === undefined) delete process.env.CURSOR_CONFIG_DIR;
+  else process.env.CURSOR_CONFIG_DIR = ambientConfigDir;
   try {
     await invokeCursor(cwd, "hello", { role, env, timeoutSec: 30 });
     const configDir = readFileSync(join(rec, "config-dir"), "utf8");
@@ -55,11 +58,28 @@ async function launch(role, env) {
       : null;
     return { configDir, config };
   } finally {
-    if (previous === undefined) delete process.env.CURSOR_AGENT_PATH;
-    else process.env.CURSOR_AGENT_PATH = previous;
+    if (previousAgent === undefined) delete process.env.CURSOR_AGENT_PATH;
+    else process.env.CURSOR_AGENT_PATH = previousAgent;
+    if (previousConfig === undefined) delete process.env.CURSOR_CONFIG_DIR;
+    else process.env.CURSOR_CONFIG_DIR = previousConfig;
     for (const dir of [rec, stub.bin, cwd]) rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// Every read-only alias with the allowance it is supposed to get. Spelled out
+// rather than derived, so a change to WEB_ROLES has to be restated here to pass.
+const READ_ONLY_LANES = [
+  ["explore", ["Read(**)"]],
+  ["explorer", ["Read(**)"]],
+  ["ask", ["Read(**)"]],
+  ["planner", ["Read(**)"]],
+  ["plan", ["Read(**)"]],
+  ["research", ["Read(**)", "WebFetch(*)"]],
+  ["researcher", ["Read(**)", "WebFetch(*)"]],
+  ["review", []]
+];
+
+const CLOSED_TOKENS = ["Read(/**)", "Write(**)", "Shell(*)", "Shell(*:*)", "Mcp(*:*)"];
 
 // ── the written config ────────────────────────────────────────────────────────
 
@@ -87,31 +107,82 @@ test("writeReadOnlyConfig: 'researcher' is the same lane as 'research'", () => {
   assert.deepEqual(permissions("researcher"), permissions("research"));
 });
 
+// buildHeadlessArgs and invokeCursor both branch on the same isReadOnlyRole over
+// one READ_ONLY_ROLES set, so membership is what needs pinning here, per alias.
+test("writeReadOnlyConfig: every read-only alias gets its lane's allowance", () => {
+  for (const [role, expectedAllow] of READ_ONLY_LANES) {
+    const { allow, deny } = permissions(role);
+    assert.deepEqual(allow, expectedAllow, `${role}: wrong allow set`);
+    for (const token of ["Write(**)", "Shell(*)", "Shell(*:*)", "Mcp(*:*)"]) {
+      assert.ok(deny.includes(token), `${role}: deny must include ${token}`);
+    }
+  }
+});
+
+test("writeReadOnlyConfig: a review reads nothing, since its diff is in the prompt", () => {
+  const { allow, deny } = permissions("review");
+  assert.deepEqual(allow, [], "a review has no workspace to read");
+  assert.ok(deny.includes("Read(**)"), "a review must be denied workspace reads too");
+  for (const token of CLOSED_TOKENS.filter((t) => t !== "Read(/**)")) {
+    assert.ok(deny.includes(token), `deny must include ${token}`);
+  }
+});
+
 // ── what reaches the CLI ──────────────────────────────────────────────────────
 
-test("invokeCursor: a read-only role is launched under a deny config, removed afterwards", async () => {
-  const { configDir, config } = await launch("explore", { ...process.env, CURSOR_CONFIG_DIR: undefined });
-  assert.ok(configDir, "a read-only role must run under its own config dir");
-  assert.deepEqual(config?.permissions.allow, ["Read(**)"]);
-  assert.equal(existsSync(configDir), false, "the per-run config dir must not outlive the turn");
+// One lane per branch of the writer. The per-alias content is pinned above
+// without spawning, and each launch here costs a subprocess.
+test("invokeCursor: a read-only role runs under a deny config, removed afterwards", async () => {
+  for (const [role, expectedAllow] of [["explore", ["Read(**)"]], ["research", ["Read(**)", "WebFetch(*)"]]]) {
+    const { configDir, config } = await launch(role);
+    assert.ok(configDir, `${role} must run under its own config dir`);
+    assert.deepEqual(config?.permissions.allow, expectedAllow, `${role}: wrong allow set`);
+    for (const token of CLOSED_TOKENS) {
+      assert.ok(config?.permissions.deny.includes(token), `${role}: deny must include ${token}`);
+    }
+    assert.equal(existsSync(configDir), false, `${role}: the per-run config dir must not outlive the turn`);
+  }
+});
+
+test("invokeCursor: a review carries its deny-everything set even with no config dir passed", async () => {
+  const { configDir, config } = await launch("review");
+  assert.ok(configDir, "a review must still run under a config dir");
+  assert.deepEqual(config?.permissions.allow, [], "a review must not inherit the read lane's allowance");
+  assert.ok(config?.permissions.deny.includes("Read(**)"), "a review must not read a workspace");
+  assert.equal(existsSync(configDir), false);
 });
 
 test("invokeCursor: a write role is left alone", async () => {
   const env = { ...process.env };
   delete env.CURSOR_CONFIG_DIR;
-  const { configDir, config } = await launch("delegate", env);
+  const { configDir, config } = await launch("delegate", { env });
   assert.equal(configDir, "", "delegate must not be constrained by the read-only config");
   assert.equal(config, null);
 });
 
-test("invokeCursor: a caller's own config dir wins, so a review keeps its deny-everything set", async () => {
+test("invokeCursor: a caller's own config dir wins, so a review keeps the set it chose", async () => {
   const caller = mkdtempSync(join(tmpdir(), "caller-cfg-"));
   writeFileSync(join(caller, "cli-config.json"), JSON.stringify({ version: 1, permissions: { allow: [], deny: ["Read(**)"] } }));
   try {
-    const { configDir, config } = await launch("review", { ...process.env, CURSOR_CONFIG_DIR: caller });
+    const { configDir, config } = await launch("review", { env: { ...process.env, CURSOR_CONFIG_DIR: caller } });
     assert.equal(configDir, caller);
     assert.deepEqual(config?.permissions.deny, ["Read(**)"], "the caller's config must not be overwritten");
   } finally {
     rmSync(caller, { recursive: true, force: true });
+  }
+});
+
+// A stray exported CURSOR_CONFIG_DIR reads exactly like a caller's deliberate
+// one, so honouring it would silently drop the deny set on every read-only lane.
+test("invokeCursor: an ambient CURSOR_CONFIG_DIR does not disable the deny config", async () => {
+  const ambient = mkdtempSync(join(tmpdir(), "ambient-cfg-"));
+  writeFileSync(join(ambient, "cli-config.json"), JSON.stringify({ permissions: { allow: ["Shell(*)"], deny: [] } }));
+  try {
+    const { configDir, config } = await launch("explore", { ambientConfigDir: ambient });
+    assert.notEqual(configDir, ambient, "an exported config dir is not the caller's choice");
+    assert.deepEqual(config?.permissions.allow, ["Read(**)"]);
+    assert.ok(config?.permissions.deny.includes("Shell(*)"), "the lane's own deny set must still apply");
+  } finally {
+    rmSync(ambient, { recursive: true, force: true });
   }
 });

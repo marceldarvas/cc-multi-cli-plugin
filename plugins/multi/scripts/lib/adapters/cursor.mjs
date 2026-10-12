@@ -963,7 +963,11 @@ export function writeReviewConfig(configDir) {
  * `--mode ask` remains what actually keeps the role from writing.
  */
 export function writeReadOnlyConfig(configDir, role) {
-  const web = WEB_ROLES.has(String(role ?? "").toLowerCase());
+  const normalized = String(role ?? "").toLowerCase();
+  // A review reads nothing: the diff arrives in the prompt, so it gets the
+  // deny-everything set instead of this lane's workspace-read allowance.
+  if (normalized === "review") return writeReviewConfig(configDir);
+  const web = WEB_ROLES.has(normalized);
   const deny = web ? READ_ONLY_DENY_PERMISSIONS : [...READ_ONLY_DENY_PERMISSIONS, "WebFetch(*)"];
   writeFileSync(
     join(configDir, "cli-config.json"),
@@ -1014,13 +1018,16 @@ function dispatchCursorTurn(cwd, prompt, options) {
 /**
  * Transport-dispatching invoke. A read-only role also gets a per-run config dir
  * holding the deny list above, so the lane is held read-only by configuration
- * and not by `--mode ask` alone. A caller that already selected a config dir
- * keeps it (that is how a review carries its own deny-everything config), and
+ * and not by `--mode ask` alone. A caller that passes its own config dir keeps
+ * it (that is how a review carries the deny-everything config it chose), and
  * write roles are untouched.
  */
 export async function invokeCursor(cwd, prompt, options = {}) {
   const env = options.env ?? process.env;
-  if (!isReadOnlyRole(options.role ?? "delegate") || env.CURSOR_CONFIG_DIR) {
+  // Only a config dir the caller passed counts as its choice. Honouring an
+  // ambient CURSOR_CONFIG_DIR here would let a stray exported var silently
+  // drop the deny set, which is indistinguishable from a deliberate override.
+  if (!isReadOnlyRole(options.role ?? "delegate") || options.env?.CURSOR_CONFIG_DIR) {
     return dispatchCursorTurn(cwd, prompt, options);
   }
   sweepOrphanedCursorDirs();
