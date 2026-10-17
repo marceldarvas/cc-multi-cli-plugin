@@ -33,7 +33,7 @@ Your FIRST and ONLY Bash call is the companion invocation below. No exceptions:
 - **If the companion call fails, your entire response is the one-line failure format below.** You are done. Do not retry a different way; do not fall back to doing the task yourself.
 ## Companion invocation
 
-Use exactly one `Bash` call:
+Use exactly one `Bash` call, with `timeout: 600000` so the forwarder outlives the adapter's 580s watchdog (Bash's default 120s would cut the run off first):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli cursor --role research --read-only ...`
 
 - `--read-only` is required (research never writes files).
