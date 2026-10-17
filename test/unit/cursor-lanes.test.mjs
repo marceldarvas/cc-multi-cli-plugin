@@ -57,3 +57,44 @@ process.stdin.on("end", () => {
     }
   });
 }
+
+// The stub answers with the prompt it received on stdin, so the companion's
+// prompt assembly is observable end to end.
+function echoPromptAgent(dir) {
+  const agent = join(dir, "cursor-agent");
+  writeFileSync(agent, `#!${process.execPath}
+if (process.argv.includes("--version")) { console.log("2026.10.01-e373342"); process.exit(0); }
+let prompt = "";
+process.stdin.on("data", (chunk) => { prompt += chunk; });
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({ type: "result", result: prompt, session_id: "echo-session" }));
+});
+`);
+  chmodSync(agent, 0o755);
+  return agent;
+}
+
+function runCompanionPrompt(dir, args) {
+  const agent = echoPromptAgent(dir);
+  const result = spawnSync(process.execPath, [companion, "task", "--cli", "cursor", "--role", "explore",
+    "--cwd", dir, "--json", ...args], {
+    env: { ...process.env, CLAUDE_PLUGIN_DATA: join(dir, "data"), CURSOR_AGENT_PATH: agent,
+      MULTI_TRANSPORT_CURSOR: "headless", CURSOR_TIMEOUT_SECS: "30" },
+    encoding: "utf8", timeout: 15000
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout).rawOutput;
+}
+
+test("--prompt is the prompt text, not a literal flag pasted into it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cursor-prompt-"));
+  try {
+    assert.equal(runCompanionPrompt(dir, ["--prompt", "We plan to split the parser"]), "We plan to split the parser");
+    assert.equal(runCompanionPrompt(dir, ["--prompt=a=b"]), "a=b");
+    writeFileSync(join(dir, "brief.md"), "Context from the file.\n");
+    assert.equal(runCompanionPrompt(dir, ["--prompt-file", "brief.md", "--prompt", "Then answer this."]),
+      "Context from the file.\n\nThen answer this.");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

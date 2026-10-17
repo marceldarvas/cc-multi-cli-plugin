@@ -900,11 +900,12 @@ function readTaskPrompt(cwd, options, positionals) {
     prompt = fs.readFileSync(path.resolve(cwd, options["prompt-file"]), "utf8");
   }
 
-  const positionalPrompt = positionals.join(" ").trim();
-  if (positionalPrompt) {
+  // --prompt is inline prompt text, the same as positionals, and comes first.
+  const inlinePrompt = [options.prompt ?? "", ...positionals].join(" ").trim();
+  if (inlinePrompt) {
     prompt = prompt
-      ? `${prompt.trimEnd()}\n\n${positionalPrompt}`
-      : positionalPrompt;
+      ? `${prompt.trimEnd()}\n\n${inlinePrompt}`
+      : inlinePrompt;
   }
 
   return prompt || readStdinIfPiped();
@@ -960,7 +961,7 @@ function enqueueBackgroundTask(cwd, job, request, options = {}) {
 
 export async function handleTask(argv, context = {}) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file", "role", "max-turns", "base", "scope"],
+    valueOptions: ["model", "effort", "cwd", "prompt", "prompt-file", "role", "max-turns", "base", "scope"],
     booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background", "read-only", "until-done"],
     aliasMap: {
       m: "model"
