@@ -148,7 +148,7 @@ export function getJobKindLabel(kind, jobClass) {
   if (kind === "adversarial-review") {
     return "adversarial-review";
   }
-  return jobClass === "review" ? "review" : "rescue";
+  return jobClass === "review" ? "review" : (kind || jobClass || "task");
 }
 
 export function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summary, write = false }) {
