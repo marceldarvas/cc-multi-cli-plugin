@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { listJobs } from "../../plugins/multi/scripts/lib/state.mjs";
+import { listJobs, readJobFile, resolveJobFile } from "../../plugins/multi/scripts/lib/state.mjs";
 
 const companion = fileURLToPath(new URL("../../plugins/multi/scripts/multi-cli-companion.mjs", import.meta.url));
 
@@ -96,6 +96,90 @@ test("--prompt is the prompt text, not a literal flag pasted into it", () => {
     assert.equal(runCompanionPrompt(dir, ["--prompt-file", "brief.md", "--prompt", "Then answer this."]),
       "Context from the file.\n\nThen answer this.");
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The stub streams one tool call and some text, then wedges. CURSOR_TIMEOUT_SECS=0
+// leaves only the adapter's 10s watchdog slack, so each run ends in ~10s.
+function wedgedAgent(dir) {
+  const agent = join(dir, "cursor-agent");
+  const events = [
+    { type: "system", session_id: "wedged-session" },
+    { type: "assistant", timestamp_ms: 100, message: { content: [{ type: "text", text: "restore_backup is defined in " }] } },
+    { type: "assistant", timestamp_ms: 101, message: { content: [{ type: "text", text: "backup.mjs." }] } },
+    { type: "tool_call", subtype: "started", call_id: "g1", timestamp_ms: 200, tool_call: { grepToolCall: {} } }
+  ];
+  writeFileSync(agent, `#!${process.execPath}
+if (process.argv.includes("--version")) { console.log("2026.10.01-e373342"); process.exit(0); }
+process.stdin.resume();
+process.stdin.on("end", () => {
+  for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event));
+  setInterval(() => {}, 1000);
+});
+`);
+  chmodSync(agent, 0o755);
+  return agent;
+}
+
+function companionEnv(dir, agent) {
+  return { ...process.env, CLAUDE_PLUGIN_DATA: join(dir, "data"), CURSOR_AGENT_PATH: agent,
+    MULTI_TRANSPORT_CURSOR: "headless", CURSOR_TIMEOUT_SECS: "0" };
+}
+
+function assertTimedOutRecord(dir, role) {
+  const jobs = listJobs(dir);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].status, "failed");
+  assert.equal(jobs[0].phase, "failed");
+  assert.equal(jobs[0].kindLabel, role);
+  const result = spawnSync(process.execPath, [companion, "result", jobs[0].id, "--cwd", dir], {
+    env: companionEnv(dir, "unused"), encoding: "utf8", timeout: 15000
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /restore_backup is defined in backup\.mjs\./, "stored partial text");
+  assert.match(result.stdout, /Cursor exceeded adapter watchdog/, "stored timeout notice");
+  return jobs[0];
+}
+
+test("a watchdog kill is recorded as a failed job while the process still exits 0", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cursor-timeout-"));
+  const previousData = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = join(dir, "data");
+  try {
+    const run = spawnSync(process.execPath, [companion, "task", "--cli", "cursor", "--role", "explore",
+      "--cwd", dir, "find restore_backup"], { env: companionEnv(dir, wedgedAgent(dir)), encoding: "utf8", timeout: 30000 });
+    assert.equal(run.error, undefined);
+    assert.equal(run.status, 0, "a nonzero exit would make the forwarding agent discard the result");
+    assert.match(run.stdout, /restore_backup is defined in backup\.mjs\./, "partial text reaches the caller");
+    assert.match(run.stdout, /Cursor exceeded adapter watchdog/, "next to the timeout notice");
+    const job = assertTimedOutRecord(dir, "explore");
+    const stored = readJobFile(resolveJobFile(dir, job.id));
+    assert.equal(stored.result.status, 1);
+    assert.equal(stored.result.error.code, "CursorTimeout");
+  } finally {
+    if (previousData === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previousData;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a background watchdog kill is recorded as a failed job too", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cursor-timeout-bg-"));
+  const previousData = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = join(dir, "data");
+  try {
+    const launch = spawnSync(process.execPath, [companion, "task", "--cli", "cursor", "--role", "research",
+      "--cwd", dir, "--background", "find restore_backup"], { env: companionEnv(dir, wedgedAgent(dir)), encoding: "utf8", timeout: 15000 });
+    assert.equal(launch.status, 0, launch.stderr);
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline && !["completed", "failed", "cancelled"].includes(listJobs(dir)[0]?.status)) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assertTimedOutRecord(dir, "research");
+  } finally {
+    if (previousData === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previousData;
     rmSync(dir, { recursive: true, force: true });
   }
 });

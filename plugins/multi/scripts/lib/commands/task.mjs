@@ -316,8 +316,11 @@ export async function executeTaskRun(request) {
     // exit code — a non-zero exit trips the forwarding subagent's "if Bash fails,
     // return nothing" rule and silently swallows the result.
     const exitStatus = 0;
+    // The job record still has to say the run failed (a watchdog kill used to
+    // read as completed), so the record status travels separately from the exit.
+    const failed = Boolean(lastResult?.error);
 
-    const rendered = renderTaskResult(
+    let rendered = renderTaskResult(
       {
         rawOutput,
         failureMessage,
@@ -329,18 +332,26 @@ export async function executeTaskRun(request) {
         write: Boolean(request.write)
       }
     );
+    // renderTaskResult shows only rawOutput when there is any, so partial output
+    // from a failed run would hide why it stopped. Append the failure here rather
+    // than in the shared renderer, which other lanes call with benign stderr.
+    if (failed && rawOutput) {
+      rendered = `${rendered}\n${failureMessage}\n`;
+    }
 
     const payload = {
-      status: exitStatus,
+      status: failed ? 1 : 0,
       threadId: sessionId ?? null,
       rawOutput,
       touchedFiles,
       reasoningSummary: [],
+      ...(failed ? { error: { code: lastResult.error.code ?? null, message: failureMessage } } : {}),
       ...(untilDone ? { autonomous: { turns: turnCount, stopReason, maxTurns } } : {})
     };
 
     return {
       exitStatus,
+      jobStatus: failed ? "failed" : "completed",
       threadId: sessionId ?? null,
       turnId: null,
       payload,
