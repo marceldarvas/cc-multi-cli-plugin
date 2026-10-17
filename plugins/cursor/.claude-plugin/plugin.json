@@ -1,7 +1,7 @@
 {
   "name": "cursor",
   "description": "Delegate implementation, web research, codebase exploration, and diff review to the Cursor CLI (headless cursor-agent -p). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": {
     "name": "greenpolo",
     "url": "https://github.com/greenpolo"

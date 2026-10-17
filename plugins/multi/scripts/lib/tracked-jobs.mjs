@@ -153,7 +153,9 @@ export async function runTrackedJob(job, runner, options = {}) {
 
   try {
     const execution = await runner();
-    const completionStatus = execution.exitStatus === 0 ? "completed" : "failed";
+    // A runner may report the record status on its own: lanes that keep the
+    // process exit at 0 for in-protocol failures still need a failed record.
+    const completionStatus = execution.jobStatus ?? (execution.exitStatus === 0 ? "completed" : "failed");
     const completedAt = nowIso();
     writeJobFile(job.workspaceRoot, job.id, {
       ...runningRecord,
