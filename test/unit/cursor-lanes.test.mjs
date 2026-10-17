@@ -13,7 +13,7 @@ import { listJobs } from "../../plugins/multi/scripts/lib/state.mjs";
 const companion = fileURLToPath(new URL("../../plugins/multi/scripts/multi-cli-companion.mjs", import.meta.url));
 
 for (const role of ["explore", "research"]) {
-  test(`${role} persists timed tool progress through the companion CLI`, () => {
+  test(`${role} persists timed tool progress and its lane label through the companion CLI`, () => {
     const dir = mkdtempSync(join(tmpdir(), "cursor-lane-"));
     const agent = join(dir, "cursor-agent");
     const events = [
@@ -46,6 +46,7 @@ process.stdin.on("end", () => {
       assert.equal(JSON.parse(result.stdout).rawOutput, "restore_backup is in backup.mjs");
       const jobs = listJobs(dir);
       assert.equal(jobs.length, 1);
+      assert.equal(jobs[0].kindLabel, role, "job listings name the lane, not rescue");
       const log = readFileSync(jobs[0].logFile, "utf8");
       assert.equal(log.split("\n").filter((line) => line.includes("Cursor: read")).length, 2, "start and finish");
       assert.match(log, /Cursor: read completed \(1750ms\)/);

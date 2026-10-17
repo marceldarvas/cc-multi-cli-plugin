@@ -862,7 +862,7 @@ export function findActiveDuplicateBackgroundTask({ workspaceRoot, fingerprint, 
   return candidates[0];
 }
 
-function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex") {
+function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex", role = null) {
   const job = createCompanionJob({
     prefix: "task",
     kind: "task",
@@ -870,7 +870,8 @@ function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex") {
     workspaceRoot,
     jobClass: "task",
     summary: taskMetadata.summary,
-    write
+    write,
+    role
   });
   job.cli = cli;
   return job;
@@ -1052,7 +1053,7 @@ export async function handleTask(argv, context = {}) {
       return;
     }
 
-    const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
+    const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli, options.role);
     const request = { ...probeRequest, jobId: job.id };
     const { payload } = enqueueBackgroundTask(cwd, job, request, { fingerprint });
     outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
@@ -1061,7 +1062,7 @@ export async function handleTask(argv, context = {}) {
 
   if (!promptOptional) requireTaskRequest(prompt, resumeLast);
 
-  const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
+  const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli, options.role);
   await runForegroundCommand(
     job,
     (progress) =>
