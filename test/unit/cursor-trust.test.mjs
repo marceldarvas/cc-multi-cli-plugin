@@ -204,6 +204,17 @@ test("cleanup preserves trust granted outside the lane's --trust while it ran", 
   assert.equal(readFileSync(marker, "utf8"), before);
 });
 
+// Accepted trade-off: a marker carries no invocation id, so a concurrent CLI grant for the same
+// workspace is indistinguishable from the lane's own. Removing it costs one re-prompt; keeping it
+// would leave every explore, research and delegate workspace trusted for good.
+test("cleanup removes a concurrent CLI-tagged grant for the lane's workspace", (t) => {
+  const { cwd, env, marker } = setup(t);
+  const cleanup = trackCursorTrust(cwd, env);
+  seed(marker, cwd, CLI);
+  cleanup();
+  assert.equal(existsSync(marker), false);
+});
+
 test("sweep preserves malformed markers, symlinks, and non-CLI grants even when deemed abandoned", (t) => {
   const { root, env, marker } = setup(t);
   const projects = join(root, ".cursor", "projects");
