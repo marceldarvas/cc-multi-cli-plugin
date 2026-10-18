@@ -1,16 +1,18 @@
-// Pure-helper tests for the Antigravity adapter (agy -p + transcript-read).
-// The spawn itself is exercised by the live smoke; these cover the pure pieces:
-// role→flag mapping, log parsing (conv-id/app-dir), transcript parsing, answer
-// + activity derivation, and outcome normalization — against real captured
-// fixtures from the live probes (test/fixtures/antigravity/).
+// Pure-helper tests for the Antigravity adapter.
+// The live turn reads `agy --output-format json` from stdout. These cover the
+// pure pieces: binary choice, role→flag mapping, the JSON envelope, and the
+// transcript parsers (captured fixtures only — the turn does not read them).
 
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
 import {
+  DEFAULT_AGY_MODEL,
   isReadOnlyRole,
   buildHeadlessArgs,
+  chooseAgyBinary,
+  officialAgyInstallPath,
   parseConversationId,
   parseAppDataDir,
   defaultAppDataDir,
@@ -21,6 +23,7 @@ import {
   deriveFileChanges,
   deriveCommandExecutions,
   normalizeAgyOutcome,
+  normalizeHeadlessResult,
   adapter
 } from "../../plugins/multi/scripts/lib/adapters/antigravity.mjs";
 
@@ -44,12 +47,20 @@ test("isReadOnlyRole: research/explore/ask/planner are read-only; delegate/write
 
 // ── buildHeadlessArgs ───────────────────────────────────────────────────────
 
-test("buildHeadlessArgs: read-only role has prompt inline, no skip-permissions", () => {
+test("buildHeadlessArgs: read-only role requests json and the default model, and ends with plan mode plus skip-permissions", () => {
   const args = buildHeadlessArgs({ prompt: "hi", cwd: "/work", logFile: "/tmp/x.log", printTimeout: "120s", role: "research" });
   assert.deepEqual(args, [
-    "-p", "hi", "--add-dir", "/work", "--log-file", "/tmp/x.log", "--print-timeout", "120s"
+    "-p", "hi",
+    "--output-format", "json",
+    "--model", "gemini-3.8-flash-high",
+    "--add-dir", "/work",
+    "--print-timeout", "120s",
+    "--mode", "plan",
+    "--dangerously-skip-permissions"
   ]);
-  assert.ok(!args.includes("--dangerously-skip-permissions"), "read-only must not skip permissions");
+  assert.equal(DEFAULT_AGY_MODEL, "gemini-3.8-flash-high");
+  assert.ok(!args.includes("--log-file"), "the turn no longer passes --log-file");
+  assert.deepEqual(args.slice(-3), ["--mode", "plan", "--dangerously-skip-permissions"], "read-only argv must end with plan mode and skip-permissions");
 });
 
 test("buildHeadlessArgs: prompt is the -p value (argv element, not stdin)", () => {
@@ -58,9 +69,85 @@ test("buildHeadlessArgs: prompt is the -p value (argv element, not stdin)", () =
   assert.equal(args[1], "multi\nline prompt");
 });
 
-test("buildHeadlessArgs: a write role (future) adds --dangerously-skip-permissions", () => {
-  const args = buildHeadlessArgs({ prompt: "go", cwd: "/work", role: "delegate" });
+test("buildHeadlessArgs: a named model overrides the default; blank falls back", () => {
+  const overridden = buildHeadlessArgs({ prompt: "hi", role: "research", model: "gemini-3.8-flash-low" });
+  assert.equal(overridden[overridden.indexOf("--model") + 1], "gemini-3.8-flash-low");
+  const blank = buildHeadlessArgs({ prompt: "hi", role: "research", model: "  " });
+  assert.equal(blank[blank.indexOf("--model") + 1], "gemini-3.8-flash-high");
+});
+
+test("buildHeadlessArgs: an unknown role without write stays in plan mode", () => {
+  const args = buildHeadlessArgs({ prompt: "go", role: "explorr" });
+  assert.deepEqual(args.slice(-3), ["--mode", "plan", "--dangerously-skip-permissions"]);
+});
+
+test("buildHeadlessArgs: a write role adds --dangerously-skip-permissions and still requests json + model", () => {
+  const args = buildHeadlessArgs({ prompt: "go", cwd: "/work", role: "delegate", write: true, model: "gemini-3.8-flash-medium" });
   assert.ok(args.includes("--dangerously-skip-permissions"));
+  assert.ok(!args.includes("--mode"), "write roles must not run plan mode");
+  assert.equal(args[args.indexOf("--output-format") + 1], "json");
+  assert.equal(args[args.indexOf("--model") + 1], "gemini-3.8-flash-medium");
+});
+
+// ── binary resolution ───────────────────────────────────────────────────────
+
+test("officialAgyInstallPath: unix home and windows LOCALAPPDATA", () => {
+  assert.equal(
+    officialAgyInstallPath({ platform: "darwin", homedir: "/Users/dev", env: {} }).replace(/\\/g, "/"),
+    "/Users/dev/.local/bin/agy"
+  );
+  assert.equal(
+    officialAgyInstallPath({
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\dev\\AppData\\Local" },
+      homedir: "C:/Users/dev"
+    }),
+    "C:/Users/dev/AppData/Local/agy/bin/agy.exe"
+  );
+});
+
+test("chooseAgyBinary: AGY_CLI_PATH wins even when an official install and which both exist", () => {
+  const chosen = chooseAgyBinary({
+    env: { AGY_CLI_PATH: "C:\\pin\\agy.exe" },
+    platform: "darwin",
+    homedir: "/Users/dev",
+    exists: () => true,
+    which: () => "/usr/bin/agy"
+  });
+  assert.equal(chosen, "C:/pin/agy.exe");
+});
+
+test("chooseAgyBinary: a blank AGY_CLI_PATH is unset, and an existing official install beats which", () => {
+  const chosen = chooseAgyBinary({
+    env: { AGY_CLI_PATH: "   " },
+    platform: "darwin",
+    homedir: "/Users/dev",
+    exists: (p) => p.replace(/\\/g, "/") === "/Users/dev/.local/bin/agy",
+    which: () => "/opt/homebrew/bin/agy"
+  });
+  assert.equal(chosen, "/Users/dev/.local/bin/agy");
+});
+
+test("chooseAgyBinary: which is used only when the official install is absent", () => {
+  const chosen = chooseAgyBinary({
+    env: {},
+    platform: "linux",
+    homedir: "/home/dev",
+    exists: () => false,
+    which: () => "/usr/local/bin/agy"
+  });
+  assert.equal(chosen, "/usr/local/bin/agy");
+});
+
+test("chooseAgyBinary: falls back to bare agy when nothing resolves", () => {
+  const chosen = chooseAgyBinary({
+    env: {},
+    platform: "darwin",
+    homedir: "/Users/dev",
+    exists: () => false,
+    which: () => ""
+  });
+  assert.equal(chosen, "agy");
 });
 
 // ── log parsing ─────────────────────────────────────────────────────────────
@@ -161,6 +248,90 @@ test("normalizeAgyOutcome: stderr is surfaced when there is no answer", () => {
 
 test("normalizeAgyOutcome: timeout yields a timeout error and status 1", () => {
   const out = normalizeAgyOutcome({ logText: LOG, transcriptText: EXPLORE, timedOut: true });
+  assert.equal(out.status, 1);
+  assert.match(out.error.message, /timed out/i);
+});
+
+// ── stdout JSON envelope ────────────────────────────────────────────────────
+
+const SUCCESS_ENVELOPE = JSON.stringify({
+  conversation_id: "f49de361-10dc-478f-a08c-1dd15b952ef5",
+  status: "SUCCESS",
+  response: "pong",
+  error: null
+});
+
+test("normalizeHeadlessResult: SUCCESS returns the response and conversation_id, with an empty tool trail", () => {
+  const out = normalizeHeadlessResult({ stdoutText: SUCCESS_ENVELOPE, exitCode: 0 });
+  assert.equal(out.status, 0);
+  assert.equal(out.error, null);
+  assert.equal(out.text, "pong");
+  assert.equal(out.sessionId, "f49de361-10dc-478f-a08c-1dd15b952ef5");
+  assert.deepEqual(out.toolCalls, []);
+  assert.deepEqual(out.fileChanges, []);
+  assert.deepEqual(out.commandExecutions, []);
+});
+
+test("normalizeHeadlessResult: a progress line before the envelope still yields the last object", () => {
+  const out = normalizeHeadlessResult({ stdoutText: "still working\n" + SUCCESS_ENVELOPE, exitCode: 0 });
+  assert.equal(out.status, 0);
+  assert.equal(out.text, "pong");
+});
+
+test("normalizeHeadlessResult: a missing status with a response is success", () => {
+  const out = normalizeHeadlessResult({
+    stdoutText: JSON.stringify({ conversation_id: "abc", response: "hello" }),
+    exitCode: 0
+  });
+  assert.equal(out.status, 0);
+  assert.equal(out.text, "hello");
+  assert.equal(out.sessionId, "abc");
+});
+
+test("normalizeHeadlessResult: an empty response is status 1", () => {
+  const out = normalizeHeadlessResult({
+    stdoutText: JSON.stringify({ conversation_id: "abc", status: "SUCCESS", response: "  ", error: null }),
+    exitCode: 0
+  });
+  assert.equal(out.status, 1);
+  assert.equal(out.text, "");
+  assert.equal(out.sessionId, "abc");
+  assert.match(out.error.message, /no answer/i);
+});
+
+test("normalizeHeadlessResult: a non-SUCCESS status uses the string error", () => {
+  const out = normalizeHeadlessResult({
+    stdoutText: JSON.stringify({ conversation_id: "abc", status: "ERROR", response: "partial", error: "model rejected" }),
+    exitCode: 1
+  });
+  assert.equal(out.status, 1);
+  assert.equal(out.text, "");
+  assert.match(out.error.message, /model rejected/);
+});
+
+test("normalizeHeadlessResult: error:null does not throw, and stderr fills the message", () => {
+  const out = normalizeHeadlessResult({
+    stdoutText: JSON.stringify({ status: "ERROR", response: "", error: null }),
+    stderr: "Please sign in",
+    exitCode: 1
+  });
+  assert.equal(out.status, 1);
+  assert.match(out.error.message, /Please sign in/);
+});
+
+test("normalizeHeadlessResult: unparseable stdout is status 1 and surfaces stderr", () => {
+  const out = normalizeHeadlessResult({
+    stdoutText: "not json",
+    stderr: "bubbletea: could not open TTY",
+    exitCode: 1
+  });
+  assert.equal(out.status, 1);
+  assert.equal(out.text, "");
+  assert.match(out.error.message, /could not open TTY/);
+});
+
+test("normalizeHeadlessResult: a timeout is status 1 even when stdout parsed", () => {
+  const out = normalizeHeadlessResult({ stdoutText: SUCCESS_ENVELOPE, timedOut: true });
   assert.equal(out.status, 1);
   assert.match(out.error.message, /timed out/i);
 });

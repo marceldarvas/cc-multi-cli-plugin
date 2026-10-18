@@ -49,8 +49,8 @@ Provider commands live under each CLI's namespace; the cross-cutting `/multi:*` 
 | `/cursor:explore` | Read-only codebase exploration via Cursor |
 | `/cursor:review` | Read-only diff review via Cursor, isolated from the repo (diff in, findings out) |
 | `/cline:review` | Read-only second-opinion code review via Cline (DeepSeek-V4.1-Flash; this fork) |
-| `/antigravity:research` | Deep external research with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
-| `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
+| `/antigravity:research` | Deep external research with Antigravity (Gemini 3.8 Flash high, read-only) |
+| `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.8 Flash high, read-only) |
 | `/opencode:delegate` | Delegate an implementation task to OpenCode (agentic; writes code; supports `--until-done`; default model: opencode/claude-opus-4-8 via Zen) |
 | `/opencode:research` | Read-only external web/documentation research via OpenCode |
 | `/opencode:explore` | Read-only codebase exploration via OpenCode |
@@ -68,7 +68,7 @@ All of them are interchangeable, and can be altered to whatever you want using t
 
 Each CLI is driven over a transport. The defaults are stable and need no configuration; the ACP path is opt-in.
 
-- **Codex** → ASP (app-server behind a broker). **Antigravity** → headless `agy` (transcript read-back).
+- **Codex** → ASP (app-server behind a broker). **Antigravity** → headless `agy -p --output-format json` (stdout).
 - **Cursor** and **OpenCode** → headless print mode **by default**, with an optional **ACP** path (Agent Client Protocol — structured JSON-RPC over stdio, via the official `@agentclientprotocol/sdk`). ACP adds in-protocol model selection, session modes, and `session/cancel`; it's still in bake-in, so headless remains the default.
 
 Opt into ACP per CLI with environment variables (e.g. in `~/.claude/settings.json` under `env`):
@@ -92,9 +92,9 @@ These are upstream CLI quirks and current limitations. If you hit something not 
 
 - **Cursor's read-only roles are held read-only by config, not just by mode.** `/cursor:explore` and `/cursor:research` run under a throwaway `CURSOR_CONFIG_DIR` that allows `Read(**)` and denies `Write`, `Shell`, `Mcp` and (explore only) `WebFetch`, plus `Read(/**)` so an absolute path cannot reach outside the workspace — `--force` would otherwise auto-approve one. `/cursor:review` keeps its own deny-everything config. Two consequences: these lanes do not see the permissive entries setup adds to your `~/.cursor/cli-config.json`, and the deny set is defence in depth rather than a boundary, because a target repo's own `.cursor/cli.json` can re-allow what it denies. `--mode ask` remains the backstop a repo cannot edit. Denying `WebFetch` also does not cut Cursor off from the web — some route is not gated by that permission and Cursor exposes no token or flag for it — so an injected repo file could still carry repo text out in a search query.
 
-- **Antigravity runs via the headless `agy` CLI (experimental).** Install the `agy` CLI (https://antigravity.google) and run `agy` once interactively to sign in — the desktop app is **not** required. `/multi:setup` reports whether `agy` is detected.
+- **Antigravity runs via the headless `agy` CLI.** Install it from https://antigravity.google/cli . Sign in by launching that binary (`~/.local/bin/agy`, or `$AGY_CLI_PATH`) in a terminal — `agy` on PATH is often the IDE launcher. The desktop app is not required. `/multi:setup` reports whether `agy` is detected.
 
-- **Antigravity reads its answer from a transcript, not stdout.** `agy`'s headless print mode (`agy -p`) currently emits nothing to stdout when piped (an upstream bug, gemini-cli#27466, unfixed as of agy 1.0.3), so the adapter recovers the model's answer from `agy`'s on-disk conversation transcript. Consequences: read-only `research`/`explore` only (no write-`delegate`), the model is fixed to **Gemini 3.5 Flash** (no per-call `--model`), and there are no token-usage metrics on this path. This is a deliberate workaround pending the upstream stdout fix.
+- **Antigravity reads `--output-format json` from stdout.** The default model is **Gemini 3.8 Flash (high)** (`gemini-3.8-flash-high`); pass `--model` to override. Shipped roles are read-only `research` / `explore` (no write-delegate, no `--until-done`). Read-only roles run `--mode plan --dangerously-skip-permissions`. Headless `agy` auto-denies any tool that needs a permission prompt and ends the turn with an empty answer, so the flag is required; plan mode is what keeps the role from editing files or running shell.
 
 - **OpenCode has no `--read-only` flag.** For read-only roles (`/opencode:research`, `/opencode:explore`), the adapter enforces read-only by injecting a custom primary agent via `OPENCODE_CONFIG_CONTENT` with write/edit/bash denied, plus an `OPENCODE_PERMISSION` deny floor. A stale bun `opencode.exe` may shadow the npm `.cmd` shim on Windows — the adapter never resolves to `opencode.exe`; set `OPENCODE_CLI_PATH` to force the right binary if needed.
 
