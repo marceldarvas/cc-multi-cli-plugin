@@ -27,9 +27,9 @@
  */
 
 import { execSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import readline from "node:readline";
 import process from "node:process";
 
@@ -916,6 +916,7 @@ const REVIEW_WORKSPACE_PREFIX = "cursor-review-ws-";
 const REVIEW_CONFIG_PREFIX = "cursor-review-cfg-";
 const READ_ONLY_CONFIG_PREFIX = "cursor-readonly-cfg-";
 const TEMP_DIR_PATTERN = /^cursor-(?:review-(?:ws|cfg)|readonly-cfg)-(\d+)-/;
+const REVIEW_WORKSPACE_PATTERN = new RegExp(`^${REVIEW_WORKSPACE_PREFIX}(\\d+)-`);
 
 function processIsAlive(pid) {
   try {
@@ -931,6 +932,7 @@ function processIsAlive(pid) {
 // and its temp dirs (a review's config dir holds Cursor's transcript of the
 // diff) stay behind. Each new turn removes dirs whose owning process is gone;
 // a live turn's dirs are never touched, however long it has been running.
+// It then removes the Cursor trust grants those abandoned review workspaces left.
 function sweepOrphanedCursorDirs(env = process.env) {
   const root = tmpdir();
   let entries;
@@ -948,7 +950,19 @@ function sweepOrphanedCursorDirs(env = process.env) {
       // Raced with another sweep.
     }
   }
-  sweepStaleCursorTrust(buildSpawnEnvironment(env));
+  sweepStaleCursorTrust(buildSpawnEnvironment(env), isAbandonedReviewWorkspace);
+}
+
+function isAbandonedReviewWorkspace(workspacePath) {
+  const tempRoots = [tmpdir()];
+  try {
+    tempRoots.push(realpathSync(tmpdir()));
+  } catch {
+    // An unresolvable tmpdir still matches by its plain path.
+  }
+  if (!tempRoots.includes(dirname(resolvePath(workspacePath)))) return false;
+  const owner = REVIEW_WORKSPACE_PATTERN.exec(basename(workspacePath));
+  return Boolean(owner) && !processIsAlive(Number(owner[1]));
 }
 
 /** Write the deny-everything Cursor CLI config a review runs under into `configDir`. */

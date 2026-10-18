@@ -12,7 +12,7 @@ const workspace = process.argv[process.argv.indexOf("--workspace") + 1];
 const marker = join(process.env.HOME, ".cursor", "projects", "vendor.name-with-dots", ".workspace-trusted");
 mkdirSync(dirname(marker), { recursive: true });
 if (!existsSync(marker)) {
-  writeFileSync(marker, JSON.stringify({ trustedAt: "2026-10-14T00:00:00Z", workspacePath: workspace }));
+  writeFileSync(marker, JSON.stringify({ trustedAt: "2026-10-14T00:00:00Z", workspacePath: workspace, trustMethod: "cli-flag" }));
 }
 if (process.env.TRUST_TEST_READY) writeFileSync(process.env.TRUST_TEST_READY, "ready");
 if (process.env.TRUST_TEST_MODE === "hang") {

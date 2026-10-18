@@ -29,11 +29,18 @@ function setup(t) {
   });
   return { root, cwd, env, marker };
 }
-function seed(marker, workspacePath) {
+// Cursor tags trust granted by `--trust` as "cli-flag"; GUI and older grants carry no trustMethod.
+function seed(marker, workspacePath, extra = {}) {
   mkdirSync(dirname(marker), { recursive: true });
-  const contents = JSON.stringify({ trustedAt: "2025-01-01T00:00:00Z", workspacePath });
+  const contents = JSON.stringify({ trustedAt: "2025-01-01T00:00:00Z", workspacePath, ...extra });
   writeFileSync(marker, contents);
   return contents;
+}
+const CLI = { trustMethod: "cli-flag" };
+async function deadPid() {
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await once(child, "close");
+  return child.pid;
 }
 
 test("headless lane removes the marker it created, without deriving its directory name", async (t) => {
@@ -54,20 +61,31 @@ for (const role of ["explore", "research", "delegate"]) {
   });
 }
 
-test("read-only invocation sweeps a stale marker but preserves live and malformed records", async (t) => {
+test("read-only invocation sweeps an abandoned review grant but preserves every other record", async (t) => {
   const { root, cwd, env, marker } = setup(t);
+  const projects = join(root, ".cursor", "projects");
   const before = seed(marker, cwd);
-  const stale = join(root, ".cursor", "projects", "another.vendor-name", ".workspace-trusted");
-  seed(stale, join(root, "gone"));
-  const otherData = join(dirname(stale), "transcript");
+  const abandoned = join(projects, "abandoned-review", ".workspace-trusted");
+  seed(abandoned, join(tmpdir(), `cursor-review-ws-${await deadPid()}-AbCdEf`), CLI);
+  const otherData = join(dirname(abandoned), "transcript");
   writeFileSync(otherData, "keep");
-  const malformed = join(root, ".cursor", "projects", "malformed", ".workspace-trusted");
-  seed(malformed, "relative-path");
+  // A missing workspace alone is not abandonment: an unmounted volume or a moved repo looks the same.
+  const unmounted = join(projects, "unmounted", ".workspace-trusted");
+  const unmountedBefore = seed(unmounted, join(root, "gone"), CLI);
+  const gui = join(projects, "gui-review", ".workspace-trusted");
+  const guiBefore = seed(gui, join(tmpdir(), `cursor-review-ws-${await deadPid()}-GhIjKl`));
+  const live = join(projects, "live-review", ".workspace-trusted");
+  const liveBefore = seed(live, join(tmpdir(), `cursor-review-ws-${process.pid}-MnOpQr`), CLI);
+  const malformed = join(projects, "malformed", ".workspace-trusted");
+  seed(malformed, "relative-path", CLI);
   await invokeCursor(cwd, "hello", { env, role: "explore" });
-  assert.equal(existsSync(stale), false);
+  assert.equal(existsSync(abandoned), false);
+  assert.equal(readFileSync(otherData, "utf8"), "keep");
+  assert.equal(readFileSync(unmounted, "utf8"), unmountedBefore);
+  assert.equal(readFileSync(gui, "utf8"), guiBefore);
+  assert.equal(readFileSync(live, "utf8"), liveBefore);
   assert.equal(readFileSync(marker, "utf8"), before);
   assert.equal(existsSync(malformed), true);
-  assert.equal(readFileSync(otherData, "utf8"), "keep");
 });
 
 for (const preExisting of [false, true]) {
@@ -116,6 +134,15 @@ test("killing the lane worker mid-run preserves pre-existing trust", { skip: pro
   }
 });
 
+test("watchdog timeout still removes the lane-created marker", async (t) => {
+  const { cwd, env, marker } = setup(t);
+  const result = await runHeadlessCursorTurn(cwd, "hello", {
+    env: { ...env, TRUST_TEST_MODE: "hang" }, role: "explore", timeoutSec: 0, watchdogSlackSec: 1
+  });
+  assert.equal(result.error?.code, "CursorTimeout");
+  assert.equal(existsSync(marker), false);
+});
+
 test("review removes its trust marker", async (t) => {
   const { env, marker } = setup(t);
   const result = await runCursorReview("review this diff", { env });
@@ -129,7 +156,7 @@ test("cleanup preserves malformed existing markers and unrelated newly created m
   writeFileSync(marker, "not json");
   const cleanup = trackCursorTrust(cwd, env);
   const unrelated = join(root, ".cursor", "projects", "unrelated", ".workspace-trusted");
-  const before = seed(unrelated, root);
+  const before = seed(unrelated, root, CLI);
   cleanup();
   assert.equal(readFileSync(marker, "utf8"), "not json");
   assert.equal(readFileSync(unrelated, "utf8"), before);
@@ -152,28 +179,46 @@ test("cleanup recognizes Cursor's canonical workspace path", (t) => {
   const alias = join(root, "alias");
   symlinkSync(cwd, alias, "dir");
   const cleanup = trackCursorTrust(alias, env);
-  seed(marker, realpathSync(cwd));
+  seed(marker, realpathSync(cwd), CLI);
   cleanup();
   assert.equal(existsSync(marker), false);
 });
 
-test("sweep preserves malformed markers, symlinks, and paths with non-ENOENT errors", (t) => {
+const caseInsensitive = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "cursor-trust-case-"));
+  try { return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase()); } finally { rmSync(probe, { recursive: true }); }
+})();
+test("cleanup matches a workspace reached through a differently cased path", { skip: !caseInsensitive }, (t) => {
+  const { cwd, env, marker } = setup(t);
+  const cleanup = trackCursorTrust(join(dirname(cwd), "WORKSPACE.with-dots"), env);
+  seed(marker, realpathSync.native(cwd), CLI);
+  cleanup();
+  assert.equal(existsSync(marker), false);
+});
+
+test("cleanup preserves trust granted outside the lane's --trust while it ran", (t) => {
+  const { cwd, env, marker } = setup(t);
+  const cleanup = trackCursorTrust(cwd, env);
+  const before = seed(marker, cwd);
+  cleanup();
+  assert.equal(readFileSync(marker, "utf8"), before);
+});
+
+test("sweep preserves malformed markers, symlinks, and non-CLI grants even when deemed abandoned", (t) => {
   const { root, env, marker } = setup(t);
   const projects = join(root, ".cursor", "projects");
-  seed(marker, root);
+  seed(marker, root, CLI);
   writeFileSync(marker, "not json");
-  const blocked = join(projects, "blocked", ".workspace-trusted");
-  const file = join(root, "file");
-  writeFileSync(file, "not a directory");
-  const before = seed(blocked, join(file, "workspace"));
+  const gui = join(projects, "gui", ".workspace-trusted");
+  const before = seed(gui, join(root, "missing"));
   const target = join(root, "external-marker");
-  seed(target, join(root, "missing"));
+  seed(target, join(root, "missing"), CLI);
   const link = join(projects, "linked", ".workspace-trusted");
   mkdirSync(dirname(link));
   symlinkSync(target, link);
-  sweepStaleCursorTrust(env);
+  sweepStaleCursorTrust(env, () => true);
   assert.equal(readFileSync(marker, "utf8"), "not json");
-  assert.equal(readFileSync(blocked, "utf8"), before);
+  assert.equal(readFileSync(gui, "utf8"), before);
   assert.equal(existsSync(link), true);
   assert.equal(existsSync(target), true);
 });
