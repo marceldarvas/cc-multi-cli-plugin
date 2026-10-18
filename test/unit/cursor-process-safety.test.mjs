@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import {
   getCursorAuthStatus,
   runHeadlessCursorTurn
 } from "../../plugins/multi/scripts/lib/adapters/cursor.mjs";
+import { createProgressReporter } from "../../plugins/multi/scripts/lib/tracked-jobs.mjs";
 
 // The stub answers `--version` immediately: runHeadlessCursorTurn probes the
 // version synchronously on its first turn, so a stub that stalls there would
@@ -39,6 +40,58 @@ function withCursorPath(value, fn) {
 }
 
 // ── watchdog ──────────────────────────────────────────────────────────────────
+
+test("explore watchdog preserves partial text, session and activity, with timed tool log lines", async () => {
+  const events = [
+    { type: "system", session_id: "partial-session" },
+    { type: "assistant", timestamp_ms: 100, message: { content: [{ type: "text", text: "Found restore_backup. " }] } },
+    { type: "assistant", timestamp_ms: 101, model_call_id: "m1", message: { content: [{ type: "text", text: "Found restore_backup. " }] } },
+    { type: "tool_call", subtype: "started", call_id: "read", timestamp_ms: 1000, tool_call: { readToolCall: {} } },
+    { type: "tool_call", subtype: "completed", call_id: "read", timestamp_ms: 2500, tool_call: { readToolCall: {} } },
+    { type: "tool_call", subtype: "started", call_id: "shell", timestamp_ms: 3000, tool_call: { shellToolCall: { args: { command: "rg restore_backup" } } } },
+    { type: "tool_call", subtype: "completed", call_id: "shell", timestamp_ms: 4500, tool_call: { shellToolCall: { args: { command: "rg restore_backup" } } } },
+    { type: "assistant", timestamp_ms: 5000, message: { content: [{ type: "text", text: "Checking callers." }] } },
+    { type: "tool_call", subtype: "started", call_id: "grep", tool_call: { grepToolCall: {} } }
+  ];
+  const { dir, path } = stubAgent(`cat <<'EVENTS'\n${events.map((e) => JSON.stringify(e)).join("\n")}\nEVENTS\nexec sleep 30`);
+  const logFile = join(dir, "progress.log");
+  const progress = createProgressReporter({ logFile });
+  try {
+    const result = await withCursorPath(path, () => runHeadlessCursorTurn(dir, "find restore_backup", {
+      role: "explore", timeoutSec: 1, watchdogSlackSec: 0,
+      onStream: (event) => { if (event.type === "phase") progress(event); }
+    }));
+    assert.equal(result.error.code, "CursorTimeout");
+    assert.equal(result.status, 1);
+    assert.equal(result.text, "Found restore_backup. Checking callers.");
+    assert.equal(result.sessionId, "partial-session");
+    assert.deepEqual(result.toolCalls, [{ name: "read" }, { name: "shell" }]);
+    assert.deepEqual(result.commandExecutions, [{ command: "rg restore_backup" }]);
+    const lines = readFileSync(logFile, "utf8").trim().split("\n");
+    assert.equal(lines.length, 6, "a start line and a finish line per call");
+    assert.match(lines[0], /Cursor: read$/);
+    assert.match(lines[1], /Cursor: read completed \(1500ms\)/);
+    assert.match(lines[2], /Cursor: shell$/);
+    assert.match(lines[3], /Cursor: shell completed \(1500ms\)/);
+    assert.match(lines[4], /Cursor: grep$/);
+    assert.match(lines[5], /Cursor: grep timed out \(\d+ms\)/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a streamed run that exits without a result keeps its plain stdout as the error", async () => {
+  const { dir, path } = stubAgent(`cat >/dev/null\necho "Error: You are not logged in. Run agent login."\nexit 1`);
+  try {
+    const result = await withCursorPath(path, () => runHeadlessCursorTurn(dir, "find restore_backup", {
+      role: "explore", timeoutSec: 10
+    }));
+    assert.equal(result.status, 1);
+    assert.equal(result.error.message, "Error: You are not logged in. Run agent login.");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("runHeadlessCursorTurn kills a wedged agent once the watchdog expires", async () => {
   const { dir, path } = stubAgent("sleep 30");

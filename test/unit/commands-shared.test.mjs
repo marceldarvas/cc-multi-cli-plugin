@@ -16,6 +16,11 @@ test("getJobKindLabel maps kinds to labels", () => {
   assert.equal(getJobKindLabel("adversarial-review", "task"), "adversarial-review");
   assert.equal(getJobKindLabel("review", "review"), "review");
   assert.equal(getJobKindLabel("task", "task"), "rescue");
+  assert.equal(getJobKindLabel("task", "task", "explore"), "explore");
+  assert.equal(getJobKindLabel("task", "task", "Research"), "research");
+  assert.equal(getJobKindLabel("task", "task", "  "), "rescue");
+  assert.equal(getJobKindLabel("review", "review", "explore"), "review");
+  assert.equal(getJobKindLabel("adversarial-review", "review", "explore"), "adversarial-review");
   assert.equal(getJobKindLabel("rescue", "rescue"), "rescue");
 });
 

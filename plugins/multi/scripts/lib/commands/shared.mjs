@@ -144,18 +144,24 @@ export async function resolveLatestTrackedTaskThread(cwd, options = {}) {
   return null;
 }
 
-export function getJobKindLabel(kind, jobClass) {
+export function getJobKindLabel(kind, jobClass, role) {
   if (kind === "adversarial-review") {
     return "adversarial-review";
   }
-  return jobClass === "review" ? "review" : "rescue";
+  if (jobClass === "review") {
+    return "review";
+  }
+  // A task run with a role (explore, research, delegate…) is labelled by that
+  // lane; a role-less task is a Codex rescue.
+  const lane = String(role ?? "").trim().toLowerCase();
+  return lane || "rescue";
 }
 
-export function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summary, write = false }) {
+export function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summary, write = false, role }) {
   return createJobRecord({
     id: generateJobId(prefix),
     kind,
-    kindLabel: getJobKindLabel(kind, jobClass),
+    kindLabel: getJobKindLabel(kind, jobClass, role),
     title,
     workspaceRoot,
     jobClass,

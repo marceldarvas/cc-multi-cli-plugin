@@ -16,8 +16,29 @@ import {
   deriveToolCalls,
   parseJsonResult,
   normalizeHeadlessOutcome,
+  resolveTimeoutSec,
   adapter
 } from "../../plugins/multi/scripts/lib/adapters/cursor.mjs";
+
+test("Cursor timeout defaults follow the role, with explicit and environment overrides", () => {
+  for (const role of ["explore", "explorer", "research", "researcher", "ask", "plan", "planner", "EXPLORE"]) {
+    assert.equal(resolveTimeoutSec(undefined, role, {}), 580, role);
+    assert.equal(resolveTimeoutSec(undefined, role, { CURSOR_TIMEOUT_SECS: "bad" }), 580, role);
+  }
+  for (const role of ["review", "REVIEW", "delegate", "writer", undefined]) {
+    assert.equal(resolveTimeoutSec(undefined, role, {}), 300, role);
+  }
+  assert.equal(resolveTimeoutSec(45, "explore", { CURSOR_TIMEOUT_SECS: "60" }), 45);
+  assert.equal(resolveTimeoutSec(0, "explore", {}), 0);
+  assert.equal(resolveTimeoutSec(undefined, "explore", { CURSOR_TIMEOUT_SECS: "60" }), 60);
+  assert.equal(resolveTimeoutSec(undefined, "review", { CURSOR_TIMEOUT_SECS: "0" }), 0);
+  for (const invalid of [NaN, Infinity, -1]) {
+    assert.equal(resolveTimeoutSec(invalid, "explore", {}), 580);
+  }
+  for (const invalid of ["", " ", "-1", "Infinity"]) {
+    assert.equal(resolveTimeoutSec(undefined, "explore", { CURSOR_TIMEOUT_SECS: invalid }), 580);
+  }
+});
 
 // ── role classification ───────────────────────────────────────────────────────
 
@@ -32,10 +53,12 @@ test("isReadOnlyRole: research/explore/ask/planner are read-only; delegate/write
   assert.equal(isReadOnlyRole(undefined), false);
 });
 
-test("headlessOutputFormat: read-only → json, write → stream-json", () => {
-  assert.equal(headlessOutputFormat("research"), "json");
-  assert.equal(headlessOutputFormat("explore"), "json");
+test("headlessOutputFormat: tool-using roles stream; diff-only review uses json", () => {
+  assert.equal(headlessOutputFormat("research"), "stream-json");
+  assert.equal(headlessOutputFormat("explore"), "stream-json");
   assert.equal(headlessOutputFormat("delegate"), "stream-json");
+  assert.equal(headlessOutputFormat("review"), "json");
+  assert.equal(headlessOutputFormat("REVIEW"), "json");
 });
 
 // ── buildHeadlessArgs ─────────────────────────────────────────────────────────
@@ -49,10 +72,10 @@ test("buildHeadlessArgs: delegate uses agent mode (force+trust) and stream-json"
   assert.ok(!args.includes("--mode"), "delegate must not set --mode");
 });
 
-test("buildHeadlessArgs: research uses --mode ask + --force + --trust + json", () => {
+test("buildHeadlessArgs: research uses --mode ask + --force + --trust + stream-json", () => {
   const args = buildHeadlessArgs({ role: "research", cwd: "/work" });
   assert.deepEqual(args, [
-    "-p", "--output-format", "json", "--model", "auto",
+    "-p", "--output-format", "stream-json", "--stream-partial-output", "--model", "auto",
     "--mode", "ask", "--force", "--trust", "--workspace", "/work"
   ]);
   // Read-only roles need --trust too. Workspace trust is a prompt separate from
@@ -60,7 +83,7 @@ test("buildHeadlessArgs: research uses --mode ask + --force + --trust + json", (
   // it makes every run hang on an unanswerable prompt until the watchdog fires.
   // --mode ask, not the missing --trust, is what keeps these roles from writing.
   assert.ok(args.includes("--trust"), "read-only roles must pre-answer workspace trust");
-  assert.ok(!args.includes("--stream-partial-output"));
+  assert.ok(args.includes("--stream-partial-output"));
 });
 
 test("buildHeadlessArgs: every read-only alias is held read-only by --mode ask", () => {
@@ -77,7 +100,7 @@ test("buildHeadlessArgs: every read-only alias is held read-only by --mode ask",
 test("buildHeadlessArgs: explore mirrors research (read-only ask mode)", () => {
   const args = buildHeadlessArgs({ role: "explore", cwd: "/work" });
   assert.ok(args.includes("--mode") && args[args.indexOf("--mode") + 1] === "ask");
-  assert.equal(args[args.indexOf("--output-format") + 1], "json");
+  assert.equal(args[args.indexOf("--output-format") + 1], "stream-json");
 });
 
 test("buildHeadlessArgs: model defaults to auto, override passes through", () => {
@@ -105,11 +128,47 @@ test("streamToolKind strips the ToolCall suffix", () => {
   assert.equal(streamToolKind(null), "tool");
 });
 
-test("mapStreamEventToProgress: tool_call started → phase; assistant → message_chunk; result → null", () => {
-  const phase = mapStreamEventToProgress({ type: "tool_call", subtype: "started", tool_call: { shellToolCall: {} } });
-  assert.equal(phase.type, "phase");
-  assert.match(phase.message, /shell/);
+test("mapStreamEventToProgress: a start line, then a duration line per tool call, correlated by call_id", () => {
+  const calls = new Map();
+  const event = (subtype, call_id, timestamp_ms) => ({
+    type: "tool_call", subtype, call_id, timestamp_ms, tool_call: { readToolCall: {} }
+  });
+  // The start line keeps a blocked call visible while the job is still running.
+  assert.deepEqual(mapStreamEventToProgress(event("started", "a", 1000), calls, 10), {
+    type: "phase", message: "Cursor: read", phase: "read"
+  });
+  assert.equal(mapStreamEventToProgress(event("started", "b", 1200), calls, 20).message, "Cursor: read");
+  assert.deepEqual(mapStreamEventToProgress(event("completed", "a", 2500), calls, 30), {
+    type: "phase", message: "Cursor: read completed (1500ms)", phase: "read"
+  });
+  assert.equal(mapStreamEventToProgress(event("completed", "b", 4200), calls, 40).message,
+    "Cursor: read completed (3000ms)");
+  assert.equal(calls.size, 0);
+});
 
+test("tool durations use arrival times when event timestamps are missing or invalid", () => {
+  const calls = new Map();
+  const started = { type: "tool_call", subtype: "started", call_id: "s", tool_call: { shellToolCall: {} } };
+  mapStreamEventToProgress(started, calls, 100);
+  assert.equal(mapStreamEventToProgress({ ...started, subtype: "completed", timestamp_ms: 9000 }, calls, 350).message,
+    "Cursor: shell completed (250ms)");
+  mapStreamEventToProgress({ ...started, timestamp_ms: 5000 }, calls, 400);
+  assert.equal(mapStreamEventToProgress({ ...started, subtype: "completed", timestamp_ms: 1000 }, calls, 700).message,
+    "Cursor: shell completed (300ms)");
+  assert.equal(mapStreamEventToProgress({ ...started, subtype: "completed" }, calls, 800).message,
+    "Cursor: shell completed (duration unavailable)");
+});
+
+test("tool function names are logged without control characters", () => {
+  assert.equal(streamToolKind({ function: { name: "search" } }), "search");
+  const progress = mapStreamEventToProgress({
+    type: "tool_call", subtype: "completed", call_id: "f", tool_call: { function: { name: "search\n\u001b[31m" } }
+  });
+  assert.match(progress.message, /search/);
+  assert.doesNotMatch(progress.message, /[\n\r\u001b]/);
+});
+
+test("mapStreamEventToProgress: assistant → message_chunk; result → null", () => {
   const chunk = mapStreamEventToProgress({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "hi" }] } });
   assert.deepEqual(chunk, { type: "message_chunk", text: "hi" });
 
@@ -226,6 +285,27 @@ test("normalizeHeadlessOutcome: stream-json picks the final result event and der
 
 test("normalizeHeadlessOutcome: exit 0 but no result is treated as an error", () => {
   const out = normalizeHeadlessOutcome({ stdoutText: "", stderr: "", exitCode: 0, outputFormat: "json" });
+  assert.equal(out.status, 1);
+  assert.ok(out.error);
+});
+
+test("an interrupted stream retains assistant deltas without duplicate flushes", () => {
+  const assistant = (text, fields = {}) => ({
+    type: "assistant", message: { content: [{ type: "text", text }] }, ...fields
+  });
+  const events = [
+    { type: "system", session_id: "partial-session" },
+    assistant("Found ", { timestamp_ms: 1000 }),
+    assistant("the file. ", { timestamp_ms: 1001 }),
+    assistant("Found the file. ", { timestamp_ms: 1002, model_call_id: "model-1" }),
+    { type: "tool_call", subtype: "completed", tool_call: { readToolCall: {} } },
+    assistant("Checking references", { timestamp_ms: 2000 }),
+    assistant("Found the file. Checking references")
+  ];
+  const out = normalizeHeadlessOutcome({ events, exitCode: 1, outputFormat: "stream-json" });
+  assert.equal(out.text, "Found the file. Checking references");
+  assert.equal(out.sessionId, "partial-session");
+  assert.deepEqual(out.toolCalls, [{ name: "read" }]);
   assert.equal(out.status, 1);
   assert.ok(out.error);
 });

@@ -316,8 +316,11 @@ export async function executeTaskRun(request) {
     // exit code — a non-zero exit trips the forwarding subagent's "if Bash fails,
     // return nothing" rule and silently swallows the result.
     const exitStatus = 0;
+    // The job record still has to say the run failed (a watchdog kill used to
+    // read as completed), so the record status travels separately from the exit.
+    const failed = Boolean(lastResult?.error);
 
-    const rendered = renderTaskResult(
+    let rendered = renderTaskResult(
       {
         rawOutput,
         failureMessage,
@@ -329,18 +332,26 @@ export async function executeTaskRun(request) {
         write: Boolean(request.write)
       }
     );
+    // renderTaskResult shows only rawOutput when there is any, so partial output
+    // from a failed run would hide why it stopped. Append the failure here rather
+    // than in the shared renderer, which other lanes call with benign stderr.
+    if (failed && rawOutput) {
+      rendered = `${rendered}\n${failureMessage}\n`;
+    }
 
     const payload = {
-      status: exitStatus,
+      status: failed ? 1 : 0,
       threadId: sessionId ?? null,
       rawOutput,
       touchedFiles,
       reasoningSummary: [],
+      ...(failed ? { error: { code: lastResult.error.code ?? null, message: failureMessage } } : {}),
       ...(untilDone ? { autonomous: { turns: turnCount, stopReason, maxTurns } } : {})
     };
 
     return {
       exitStatus,
+      jobStatus: failed ? "failed" : "completed",
       threadId: sessionId ?? null,
       turnId: null,
       payload,
@@ -862,7 +873,7 @@ export function findActiveDuplicateBackgroundTask({ workspaceRoot, fingerprint, 
   return candidates[0];
 }
 
-function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex") {
+function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex", role = null) {
   const job = createCompanionJob({
     prefix: "task",
     kind: "task",
@@ -870,7 +881,8 @@ function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex") {
     workspaceRoot,
     jobClass: "task",
     summary: taskMetadata.summary,
-    write
+    write,
+    role
   });
   job.cli = cli;
   return job;
@@ -900,11 +912,12 @@ function readTaskPrompt(cwd, options, positionals) {
     prompt = fs.readFileSync(path.resolve(cwd, options["prompt-file"]), "utf8");
   }
 
-  const positionalPrompt = positionals.join(" ").trim();
-  if (positionalPrompt) {
+  // --prompt is inline prompt text, the same as positionals, and comes first.
+  const inlinePrompt = [options.prompt ?? "", ...positionals].join(" ").trim();
+  if (inlinePrompt) {
     prompt = prompt
-      ? `${prompt.trimEnd()}\n\n${positionalPrompt}`
-      : positionalPrompt;
+      ? `${prompt.trimEnd()}\n\n${inlinePrompt}`
+      : inlinePrompt;
   }
 
   return prompt || readStdinIfPiped();
@@ -960,7 +973,7 @@ function enqueueBackgroundTask(cwd, job, request, options = {}) {
 
 export async function handleTask(argv, context = {}) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file", "role", "max-turns", "base", "scope"],
+    valueOptions: ["model", "effort", "cwd", "prompt", "prompt-file", "role", "max-turns", "base", "scope"],
     booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background", "read-only", "until-done"],
     aliasMap: {
       m: "model"
@@ -1051,7 +1064,7 @@ export async function handleTask(argv, context = {}) {
       return;
     }
 
-    const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
+    const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli, options.role);
     const request = { ...probeRequest, jobId: job.id };
     const { payload } = enqueueBackgroundTask(cwd, job, request, { fingerprint });
     outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
@@ -1060,7 +1073,7 @@ export async function handleTask(argv, context = {}) {
 
   if (!promptOptional) requireTaskRequest(prompt, resumeLast);
 
-  const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
+  const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli, options.role);
   await runForegroundCommand(
     job,
     (progress) =>

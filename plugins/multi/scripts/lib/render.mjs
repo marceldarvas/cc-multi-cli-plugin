@@ -411,7 +411,13 @@ export function renderStoredJobResult(job, storedJob) {
     (typeof storedJob?.result?.codex?.stdout === "string" && storedJob.result.codex.stdout) ||
     "";
   if (rawOutput) {
-    const output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
+    let output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
+    // Partial output from a failed run is followed by why it stopped. Only lanes
+    // that record a structured error (Cursor) store result.error.
+    const errorMessage = storedJob?.result?.error?.message;
+    if (typeof errorMessage === "string" && errorMessage.trim()) {
+      output = `${output}\n${errorMessage.trim()}\n`;
+    }
     if (!threadId) {
       return output;
     }

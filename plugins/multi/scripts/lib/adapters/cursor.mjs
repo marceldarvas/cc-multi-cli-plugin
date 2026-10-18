@@ -156,12 +156,9 @@ export function isReadOnlyRole(role) {
   return READ_ONLY_ROLES.has(String(role ?? "").toLowerCase());
 }
 
-/**
- * Read-only roles only need the final answer (json); write roles use stream-json
- * so we can surface live progress and derive file/command activity per turn.
- */
+/** Tool-using roles stream progress; diff-only reviews need just the final answer. */
 export function headlessOutputFormat(role) {
-  return isReadOnlyRole(role) ? "json" : "stream-json";
+  return String(role ?? "").toLowerCase() === "review" ? "json" : "stream-json";
 }
 
 /**
@@ -252,6 +249,7 @@ function emitStreamEvent(onStream, event) {
 /** Extract the tool kind from a stream-json tool_call object (keyed e.g. `shellToolCall`). */
 export function streamToolKind(toolCallObj) {
   if (!toolCallObj || typeof toolCallObj !== "object") return "tool";
+  if (typeof toolCallObj.function?.name === "string") return toolCallObj.function.name;
   const key = Object.keys(toolCallObj)[0] ?? "tool";
   return key.replace(/ToolCall$/, "") || "tool";
 }
@@ -267,17 +265,35 @@ function extractAssistantText(event) {
 
 /**
  * Map a stream-json event to a progress event for the companion's onStream sink.
- * task.mjs forwards only `phase` events to the user, so tool-call starts become
- * phase pings ("things happening"); assistant deltas become message_chunks
- * (filtered as token noise downstream but available for richer sinks).
+ * The companion forwards phase events to the job log. Each tool call logs a
+ * start line, so a blocked call is visible while the job runs, and a finish
+ * line with its duration; calls still pending at the watchdog get a timeout line.
+ * Pair CLI timestamps when valid, otherwise pair monotonic arrival times.
  *
  * @returns {{ type: string, [k: string]: any } | null}
  */
-export function mapStreamEventToProgress(event) {
+export function mapStreamEventToProgress(event, toolStarts = new Map(), now = performance.now()) {
   if (!event || typeof event !== "object") return null;
   if (event.type === "tool_call" && event.subtype === "started") {
-    const kind = streamToolKind(event.tool_call);
-    return { type: "phase", message: `Cursor: ${sanitizeDiagnosticMessage(kind) || "tool"}`, phase: kind };
+    if (event.call_id) toolStarts.set(event.call_id, { event, receivedAt: now });
+    const kind = sanitizeDiagnosticMessage(streamToolKind(event.tool_call)) || "tool";
+    return { type: "phase", message: `Cursor: ${kind}`, phase: kind };
+  }
+  if (event.type === "tool_call" && ["completed", "timed_out"].includes(event.subtype)) {
+    const start = toolStarts.get(event.call_id);
+    toolStarts.delete(event.call_id);
+    const kind = sanitizeDiagnosticMessage(streamToolKind(event.tool_call)) || "tool";
+    let duration = "duration unavailable";
+    if (start) {
+      const startMs = start.event.timestamp_ms;
+      const endMs = event.timestamp_ms;
+      const elapsed = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs
+        ? endMs - startMs
+        : now - start.receivedAt;
+      duration = `${Math.max(0, Math.round(elapsed))}ms`;
+    }
+    const outcome = event.subtype === "timed_out" ? "timed out" : "completed";
+    return { type: "phase", message: `Cursor: ${kind} ${outcome} (${duration})`, phase: kind };
   }
   if (event.type === "assistant") {
     const text = extractAssistantText(event);
@@ -390,10 +406,17 @@ export function normalizeHeadlessOutcome({ events = [], stdoutText = "", stderr 
   const toolCalls = deriveToolCalls(events);
 
   if (!resultObj) {
+    // With --stream-partial-output only timestamped, untagged assistant events
+    // carry new text. model_call_id flushes and the untimestamped final flush
+    // repeat those deltas and must not be appended again.
+    const text = events
+      .filter((event) => event?.type === "assistant" && event.timestamp_ms != null && event.model_call_id == null)
+      .map(extractAssistantText)
+      .join("");
     const message = (stderr || "").trim()
       || (stdoutText || "").trim()
       || `Cursor produced no result (exit ${exitCode}).`;
-    return { sessionId: firstSessionId(events), text: "", error: { message }, status: exitCode || 1, fileChanges, commandExecutions, toolCalls };
+    return { sessionId: firstSessionId(events), text, error: { message }, status: exitCode || 1, fileChanges, commandExecutions, toolCalls };
   }
 
   const text = typeof resultObj.result === "string" ? resultObj.result : "";
@@ -481,21 +504,31 @@ export function getCursorAuthStatus() {
 // explicit "0" is honored as a literal deadline (the turn gets only the slack
 // window), not as "disable the watchdog" — same meaning timeoutSec: 0 carries
 // in the Cline adapter.
-const FALLBACK_TIMEOUT_SECS = 300;
 const WATCHDOG_SLACK_SECS = 10;
+const STREAM_DIAGNOSTIC_TAIL_CHARS = 8192;
 
-const DEFAULT_TIMEOUT_SECS = envNumber(process.env.CURSOR_TIMEOUT_SECS, FALLBACK_TIMEOUT_SECS, {
-  allowZero: true
-});
+// Read-only lanes that explore with tools need more than 300s: a plan-level
+// exploration makes a dozen or more tool calls at 13-31s each (issue #21).
+// They get 580s because the forwarding agents run the companion in one Bash
+// call, which Claude Code caps at 600s; 580s plus the watchdog slack still
+// returns inside it. A diff-only review makes no tool calls, so it keeps 300s.
+// Precedence: explicit timeoutSec, then CURSOR_TIMEOUT_SECS, then the role default.
+const TOOL_USING_READ_ONLY_TIMEOUT_SECS = 580;
+const DEFAULT_TIMEOUT_SECS = 300;
 
-function resolveTimeoutSec(timeoutSec) {
-  return Number.isFinite(timeoutSec) && timeoutSec >= 0 ? timeoutSec : DEFAULT_TIMEOUT_SECS;
+export function resolveTimeoutSec(timeoutSec, role, env = process.env) {
+  const fallback = isReadOnlyRole(role) && String(role).toLowerCase() !== "review"
+    ? TOOL_USING_READ_ONLY_TIMEOUT_SECS
+    : DEFAULT_TIMEOUT_SECS;
+  return Number.isFinite(timeoutSec) && timeoutSec >= 0
+    ? timeoutSec
+    : envNumber(env.CURSOR_TIMEOUT_SECS, fallback, { allowZero: true });
 }
 
 /**
  * Run a single prompt through Cursor headless print mode and capture the result.
- * The prompt is written to stdin (newline-safe). For write roles we stream-parse
- * NDJSON and surface progress via onStream; for read-only roles we collect the
+ * The prompt is written to stdin (newline-safe). Tool-using roles stream-parse
+ * NDJSON and surface progress via onStream; diff-only reviews collect the
  * single json result. The execution mode (agent vs ask) is derived from
  * `options.role` via isReadOnlyRole; `options.write` is accepted for caller
  * symmetry but is not read here.
@@ -521,7 +554,7 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
     maybeWarnAboutCursorVersion(getCursorAvailability().version);
   }
 
-  const timeoutSec = resolveTimeoutSec(options.timeoutSec);
+  const timeoutSec = resolveTimeoutSec(options.timeoutSec, role, options.env ?? process.env);
   const slackSec = Number.isFinite(options.watchdogSlackSec) ? options.watchdogSlackSec : WATCHDOG_SLACK_SECS;
   const watchdogMs = (timeoutSec + slackSec) * 1000;
 
@@ -559,37 +592,43 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
     // not by the watchdog — closing that gap needs the child pid tracked in job
     // state so cancel can target it directly.
     watchdog = setTimeout(() => {
+      for (const { event } of toolStarts.values()) {
+        const progress = mapStreamEventToProgress({ ...event, subtype: "timed_out", timestamp_ms: undefined }, toolStarts);
+        emitStreamEvent(options.onStream, progress);
+      }
       if (Number.isFinite(child.pid)) {
         try { terminateProcessTree(child.pid); } catch { /* best-effort */ }
       }
       finish({
-        sessionId: null,
-        text: "",
+        ...normalizeHeadlessOutcome({ events, stdoutText, stderr: stderrText, exitCode: 1, outputFormat }),
         error: { code: "CursorTimeout", message: `Cursor exceeded adapter watchdog (${watchdogMs}ms)` },
-        status: 1,
-        fileChanges: [],
-        commandExecutions: [],
-        toolCalls: []
+        status: 1
       });
     }, watchdogMs);
 
     const events = [];
+    const toolStarts = new Map();
     let stdoutText = "";
     let stderrText = "";
 
     if (outputFormat === "stream-json") {
       const rl = readline.createInterface({ input: child.stdout });
       rl.on("line", (line) => {
+        if (settled) return;
         const trimmed = line.trim();
         if (!trimmed) return;
         let evt;
         try {
           evt = JSON.parse(trimmed);
         } catch {
+          // Plain-text lines (login or usage errors) are the only diagnostic
+          // when the run ends without a result and stderr is empty. Keep a
+          // bounded tail so a chatty CLI cannot grow memory without limit.
+          stdoutText = `${stdoutText}${trimmed}\n`.slice(-STREAM_DIAGNOSTIC_TAIL_CHARS);
           return;
         }
         events.push(evt);
-        const progress = mapStreamEventToProgress(evt);
+        const progress = mapStreamEventToProgress(evt, toolStarts);
         if (progress) emitStreamEvent(options.onStream, progress);
       });
     } else if (child.stdout) {
