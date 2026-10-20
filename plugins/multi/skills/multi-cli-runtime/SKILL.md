@@ -25,7 +25,7 @@ Where `<cli>` is one of `codex|cursor|antigravity|opencode` (or any CLI added vi
 Treat these as runtime controls — strip them from the task text before forwarding, then re-add them as flags on the companion call:
 
 - `--background` / `--wait` — `--wait`/foreground is the default and is what you should run: the companion blocks until the CLI finishes, so your Bash call returns the real result. For long-running work, the PARENT command schedules background execution by running this subagent as a harness background task (which notifies the main thread on completion/failure) — NOT by passing `--background`. The companion's `--background` detaches a worker the harness can't see (no notification) and is only for explicit user-requested fire-and-forget polled via `/multi:status`.
-- `--model <name>` — pass through verbatim. Leave unset unless the user explicitly asked for a model. (Antigravity ignores `--model`: its headless `agy -p` path is fixed to Gemini 3.5 Flash.)
+- `--model <name>` — pass through verbatim. Leave unset unless the user explicitly asked for a model. Antigravity defaults to `gemini-3.8-flash-high` when the flag is omitted.
 - `--effort <level>` — only Codex accepts this (`none|minimal|low|medium|high|xhigh`). Other adapters ignore it. Pass through verbatim if present.
 - `--resume` — translate to `--resume-last`.
 - `--fresh` — do not add `--resume-last`, even if the user's text sounds like a follow-up.

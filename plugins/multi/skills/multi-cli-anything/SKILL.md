@@ -45,7 +45,7 @@ Useful queries (try in order, stop when you find a working example):
 A reference implementation reveals things probes don't:
 
 - **Spawn quirks** — does the CLI need `shell: true` on Windows? A specific env var to init? Does it want the prompt on stdin vs as an arg?
-- **Output completeness** — does its `-p` mode actually print the answer, or (like `agy`) write nothing to stdout when piped? What's the JSON envelope shape?
+- **Output completeness** — does its `-p` mode actually print the answer? What's the JSON envelope shape?
 - **Auth flow specifics** — env vars, token paths, OAuth dance details.
 - **Model ID conventions** — version suffixes, deprecated aliases. (The Gemini family's `-preview` suffix trap — which Antigravity surfaces — is the canonical example.)
 
@@ -84,7 +84,7 @@ Most modern agent CLIs have a non-interactive mode: `-p`/`--print` with `--outpu
 
 ### 2. The CLI runs headlessly but writes nothing usable to stdout
 
-Some CLIs run a prompt but don't print the answer to stdout when piped (a known class of bug — e.g. Antigravity's `agy`, gemini-cli#27466). If the CLI persists results somewhere on disk (a transcript/log/session file), you can still drive it: spawn it, learn the artifact location, and read the answer back. **This is how Antigravity is driven** — `antigravity.mjs` is your template. More work than path 1, but the same five-method `adapter` interface.
+Some CLIs run a prompt but don't print the answer to stdout when piped. If the CLI persists results somewhere on disk (a transcript, log, or session file), you can still drive it: spawn it, learn the artifact location, and read the answer back. No shipped adapter uses this path anymore. `antigravity.mjs` used to, and now parses `--output-format json` from stdout like `cursor.mjs`. More work than path 1, but the same five-method `adapter` interface.
 
 ### 3. App-server / HTTP transport (ASP)
 
@@ -297,14 +297,14 @@ Restart Claude Code (subagent definitions are session-cached), then try `/<new-c
 
 ## Spawn + read-artifacts integration (no usable stdout)
 
-Worked example: `antigravity.mjs`. Take this path only when the CLI runs headlessly but doesn't print the answer (path 2 in Prerequisites). The structure differs from the headless-JSON path in one place — `invoke` instead of parsing stdout:
+No shipped adapter uses this path anymore. `antigravity.mjs` used to, and now parses `--output-format json` from stdout like `cursor.mjs`. Take this path only when the CLI runs headlessly but doesn't print the answer (path 2 in Prerequisites). The structure differs from the headless-JSON path in one place — `invoke` reads an on-disk artifact instead of stdout:
 
-1. Spawn the CLI with whatever makes it persist results (for `agy`: `agy -p "<prompt>" --add-dir <cwd> --log-file <tmp> --print-timeout`).
-2. Learn the result location. `agy` writes a `Created conversation <id>` line to the `--log-file`; the adapter parses it (with a `cache/last_conversations.json[cwd]` fallback) and reads `~/.gemini/antigravity-cli/brain/<id>/.../transcript.jsonl` — the last non-empty `PLANNER_RESPONSE`/`MODEL` step is the answer.
-3. Watchdog: kill the process tree on timeout; clean up the temp log.
+1. Spawn the CLI with whatever makes it persist results (a `--log-file`, a session directory, or another documented artifact path).
+2. Learn the result location from that artifact and read the answer back.
+3. Watchdog: kill the process tree on timeout; clean up temp files.
 4. Conform to the same five-method `adapter` interface; `isAvailable` is a `--version`/path probe, `isAuthenticated` checks the CLI's own credential file.
 
-Steps 3 (register + dispatch), 5–9 (subagents, plugin, commands, marketplace, install) are **identical** to the headless path. The lesson `antigravity.mjs` teaches: the `adapter` interface is transport-agnostic — when a CLI has no clean stdout to parse, you implement the same five methods over "spawn the binary and read the files it writes."
+Steps 3 (register + dispatch), 5–9 (subagents, plugin, commands, marketplace, install) are **identical** to the headless path. The `adapter` interface is transport-agnostic — when a CLI has no clean stdout to parse, you implement the same five methods over "spawn the binary and read the files it writes."
 
 ## ASP integration (HTTP/app-server)
 
@@ -332,9 +332,9 @@ The shipped adapters cover the live transport shapes — match the one that fits
 
 | Transport | Worked example | When |
 |---|---|---|
-| **Headless print mode** (prompt on stdin/arg, JSON or stream-json on stdout) | `cursor.mjs`, `opencode.mjs` | The common path. Any CLI with a `-p`/`--print` + `--output-format json` mode. Aider, etc. |
+| **Headless print mode** (prompt on stdin/arg, JSON or stream-json on stdout) | `cursor.mjs`, `opencode.mjs`, `antigravity.mjs` | The common path. Any CLI with a `-p`/`--print` + `--output-format json` mode. Aider, etc. Antigravity passes the prompt as the `-p` argument and reads one JSON object from stdout. |
 | **Headless NDJSON** (prompt on stdin, NDJSON event stream on stdout) | `opencode.mjs` | OpenCode's `opencode run --format json` — a NDJSON variant of headless print mode; same five-method interface. |
-| **Spawn + read-artifacts** (CLI runs but stdout is empty/unusable; answer persisted on disk) | `antigravity.mjs` | A CLI with an empty-piped-stdout bug or a transcript/log file as the only result sink. |
+| **Spawn + read-artifacts** (CLI runs but stdout is empty/unusable; answer persisted on disk) | none shipped | A CLI with an empty-piped-stdout bug or a transcript/log file as the only result sink. `antigravity.mjs` used to take this path; it now parses stdout JSON. |
 | **ASP / app-server** (HTTP+SSE or socket JSON-RPC to a long-lived server) | `codex.mjs` + `lib/app-server.mjs` | A CLI that only exposes a server mode. |
 | **ACP** (stdio JSON-RPC, official SDK) | `lib/acp/client.mjs` + `lib/acp/resolve.mjs`; dual-transport adapters `cursor.mjs` / `opencode.mjs` | When a CLI's ACP mode beats headless, or you want in-protocol model select / session modes / `session/cancel`. Opt-in per CLI via `MULTI_TRANSPORT_<CLI>=acp`. |
 

@@ -1,28 +1,25 @@
 /**
- * Antigravity adapter — drives Google's `agy` CLI (Antigravity CLI) in headless
- * print mode and reads the answer back from the on-disk conversation transcript.
+ * Antigravity adapter — drives Google's headless `agy` CLI in print mode and
+ * reads `--output-format json` from stdout.
  *
- * WHY THE TRANSCRIPT, NOT STDOUT (verified live on agy v1.0.3, Windows 11):
- *   `agy -p "<prompt>"` runs a full model turn, but when stdout is NOT a TTY
- *   (i.e. a pipe / subprocess, exactly our case) it writes ZERO bytes to
- *   stdout — an upstream bug (gemini-cli#27466, `text_drip.go` isatty gate),
- *   still open in 1.0.3. The model's answer IS reliably persisted to disk as
- *   structured JSONL at:
- *     ~/.gemini/antigravity-cli/brain/<conv-id>/.system_generated/logs/transcript.jsonl
- *   So we spawn `agy -p`, ignore its (empty) stdout, learn the conversation id
- *   from a per-invocation `--log-file` (`Created conversation <id>`), and parse
- *   the transcript: the last non-empty MODEL/PLANNER_RESPONSE step is the answer;
- *   typed MODEL steps (SEARCH_WEB, VIEW_FILE, LIST_DIRECTORY, ...) are the trail.
+ * Binary order: `AGY_CLI_PATH` when set and non-blank; else the official install
+ * (`~/.local/bin/agy`, or `%LOCALAPPDATA%/agy/bin/agy.exe` on Windows) when that
+ * file exists; else `which`/`where`; else bare `agy`. PATH `agy` is often the
+ * IDE launcher, so the install-path check comes before PATH.
  *
- * SCOPE: read-only `research` / `explore` only (no `--dangerously-skip-permissions`
- *   → the default request-review gate means write tools never auto-run headless).
- *   Write-`delegate`, per-call `--model` (no headless flag — model is the configured
- *   default, Gemini 3.5 Flash), and `--until-done` are intentionally NOT supported.
+ * Default model is `gemini-3.8-flash-high`. A non-blank `options.model` overrides
+ * it. The prompt is the `-p` argv element.
  *
- * EXPERIMENTAL: this depends on `agy`'s undocumented transcript layout + log lines.
- *   Re-verify if `agy` changes. Authenticating/automating via Google's own official
- *   `agy` binary (and reading only our own local files) is ToS-safe — unlike the
- *   abandoned desktop-Language-Server reverse-engineering approach.
+ * Shipped roles are read-only (`research` / `explore`). They run `--mode plan`,
+ * so agy plans instead of editing files or running shell, plus
+ * `--dangerously-skip-permissions`: headless `agy` auto-denies any tool that
+ * needs a permission prompt and ends the turn with an empty response. Plan mode
+ * is the only write guard, so this is not a hard sandbox. Write-delegate and
+ * `--until-done` are not shipped.
+ *
+ * The live turn uses the JSON envelope (`conversation_id`, `status`, `response`,
+ * `error`). Transcript parsers below cover captured fixtures; the turn does not
+ * read them.
  */
 
 import { execSync } from "node:child_process";
@@ -36,34 +33,84 @@ import { buildSpawnEnvironment } from "../acp-client.mjs";
 
 // ─── Binary resolution ──────────────────────────────────────────────────────
 //
-// `agy` is a single Go binary. On Windows the installer drops it at
-// %LOCALAPPDATA%\agy\bin\agy.exe (a real .exe → process.mjs spawns it WITHOUT a
-// shell, so the prompt passes safely as an argv element — no cmd.exe quoting).
+// `agy` on PATH is often the IDE launcher. The headless CLI is a separate
+// binary. On Windows the installer drops a real .exe at
+// %LOCALAPPDATA%\agy\bin\agy.exe, so process.mjs spawns it without a shell and
+// the prompt passes as an argv element.
 
-function localAppDataRoot() {
-  if (process.env.LOCALAPPDATA) return process.env.LOCALAPPDATA.replace(/\\/g, "/");
-  const user = process.env.USERNAME ?? process.env.USER ?? "user";
-  return `C:/Users/${user}/AppData/Local`;
+/** Default headless model. A non-blank per-call model overrides this. */
+export const DEFAULT_AGY_MODEL = "gemini-3.8-flash-high";
+
+/**
+ * Official headless install path for this platform.
+ * @param {{ platform?: string, env?: NodeJS.ProcessEnv, homedir?: string }} [opts]
+ * @returns {string}
+ */
+export function officialAgyInstallPath({ platform = process.platform, env = process.env, homedir = os.homedir() } = {}) {
+  if (platform === "win32") {
+    const root = env.LOCALAPPDATA
+      ? String(env.LOCALAPPDATA).replace(/\\/g, "/")
+      : `C:/Users/${env.USERNAME ?? env.USER ?? "user"}/AppData/Local`;
+    return `${root.replace(/\/$/, "")}/agy/bin/agy.exe`;
+  }
+  return path.join(homedir, ".local", "bin", "agy");
 }
 
-const AGY_WINDOWS_FALLBACK = `${localAppDataRoot()}/agy/bin/agy.exe`;
+/**
+ * Pick the headless `agy` binary. `exists` and `which` are injected so tests
+ * do not depend on the machine's PATH or install.
+ *
+ * @param {{ env?: NodeJS.ProcessEnv, platform?: string, homedir?: string, exists?: (p: string) => boolean, which?: (() => string|null)|null }} [opts]
+ * @returns {string}
+ */
+export function chooseAgyBinary({
+  env = process.env,
+  platform = process.platform,
+  homedir = os.homedir(),
+  exists = (p) => {
+    try {
+      return fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  },
+  which = null
+} = {}) {
+  const pinned = typeof env.AGY_CLI_PATH === "string" ? env.AGY_CLI_PATH.trim() : "";
+  if (pinned) return pinned.replace(/\\/g, "/");
 
-export function findAgyBinary() {
-  // User override always wins.
-  if (process.env.AGY_CLI_PATH) {
-    return process.env.AGY_CLI_PATH.replace(/\\/g, "/");
+  const official = officialAgyInstallPath({ platform, env, homedir });
+  if (exists(official)) return official.replace(/\\/g, "/");
+
+  if (typeof which === "function") {
+    let found = "";
+    try {
+      found = which() ?? "";
+    } catch {
+      found = "";
+    }
+    const normalized = String(found).trim().replace(/\\/g, "/");
+    if (normalized) return normalized;
   }
-  const whereCmd = process.platform === "win32" ? "where agy" : "which agy";
-  try {
-    const found = execSync(whereCmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] })
-      .split(/\r?\n/)
-      .filter(Boolean)[0];
-    if (found) return found.replace(/\\/g, "/");
-  } catch {
-    // Not on PATH — fall through.
-  }
-  if (process.platform === "win32") return AGY_WINDOWS_FALLBACK;
+
   return "agy";
+}
+
+/** Resolve the binary for a live turn. */
+export function findAgyBinary() {
+  return chooseAgyBinary({
+    which() {
+      const whereCmd = process.platform === "win32" ? "where agy" : "which agy";
+      try {
+        const found = execSync(whereCmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] })
+          .split(/\r?\n/)
+          .filter(Boolean)[0];
+        return found || null;
+      } catch {
+        return null;
+      }
+    }
+  });
 }
 
 // ─── Role → flags ─────────────────────────────────────────────────────────────
@@ -84,22 +131,33 @@ export function isReadOnlyRole(role) {
 }
 
 /**
- * Build the `agy` argv. The prompt is passed inline as the `-p` value (safe as a
- * single argv element since agy.exe spawns without a shell). Read-only roles omit
- * `--dangerously-skip-permissions` so write tools stay gated behind request-review.
+ * Model id for this turn. Blank or whitespace keeps the default.
+ * @param {string|undefined|null} model
+ * @returns {string}
+ */
+function resolveAgyModel(model) {
+  return typeof model === "string" && model.trim() ? model.trim() : DEFAULT_AGY_MODEL;
+}
+
+/**
+ * Build the `agy` argv. The prompt is the `-p` value (one argv element; the
+ * Windows .exe spawns without a shell). Every turn asks for a JSON envelope and
+ * names a model. Read-only roles run `--mode plan`, so agy plans instead of
+ * editing files or running shell, plus `--dangerously-skip-permissions`, so
+ * headless mode does not auto-deny their read and web tools. A turn leaves
+ * plan mode only when `write` is set and the role is not read-only.
  *
- * @param {{ prompt?: string, cwd?: string, logFile?: string, printTimeout?: string, role?: string }} [opts]
+ * @param {{ prompt?: string, cwd?: string, printTimeout?: string, role?: string, model?: string, write?: boolean }} [opts]
  * @returns {string[]}
  */
-export function buildHeadlessArgs({ prompt, cwd, logFile, printTimeout, role = "researcher" } = {}) {
-  const args = ["-p", String(prompt ?? "")];
+export function buildHeadlessArgs({ prompt, cwd, printTimeout, role = "researcher", model, write = false } = {}) {
+  const args = ["-p", String(prompt ?? ""), "--output-format", "json", "--model", resolveAgyModel(model)];
   if (cwd) args.push("--add-dir", cwd);
-  if (logFile) args.push("--log-file", logFile);
   if (printTimeout) args.push("--print-timeout", String(printTimeout));
-  if (!isReadOnlyRole(role)) {
-    // Write role (not shipped yet): auto-approve tool execution.
-    args.push("--dangerously-skip-permissions");
+  if (!write || isReadOnlyRole(role)) {
+    args.push("--mode", "plan");
   }
+  args.push("--dangerously-skip-permissions");
   return args;
 }
 
@@ -242,11 +300,91 @@ export function normalizeAgyOutcome({ logText = "", transcriptText = "", stderr 
     const detail = (stderr || "").trim();
     const message = detail
       ? `Antigravity (agy) produced no answer. ${detail}`
-      : "Antigravity (agy) produced no answer (empty or unreadable transcript). Ensure `agy` is installed and signed in (run `agy` once interactively).";
+      : "Antigravity (agy) produced no answer (empty or unreadable transcript). Ensure the headless agy binary is installed and signed in (launch ~/.local/bin/agy or $AGY_CLI_PATH in a terminal).";
     return { sessionId, text: "", error: { message }, status: exitCode || 1, fileChanges, commandExecutions, toolCalls };
   }
 
   return { sessionId, text, error: null, status: 0, fileChanges, commandExecutions, toolCalls };
+}
+
+/**
+ * Parse the last JSON object on stdout. A progress line may precede the envelope.
+ * @param {string} stdoutText
+ * @returns {object|null}
+ */
+function parseHeadlessEnvelope(stdoutText) {
+  const text = String(stdoutText ?? "").trim();
+  if (!text) return null;
+  try {
+    const obj = JSON.parse(text);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+  } catch {
+    // A progress line may precede the envelope.
+  }
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].startsWith("{")) continue;
+    try {
+      const obj = JSON.parse(lines[i]);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+    } catch {
+      // keep scanning
+    }
+  }
+  return null;
+}
+
+function stderrDetail(stderr) {
+  const detail = String(stderr ?? "").trim();
+  return detail || null;
+}
+
+/**
+ * Normalize one headless JSON envelope into the adapter result shape.
+ * The JSON result has no tool trail, so those arrays stay empty.
+ *
+ * @param {{ stdoutText?: string, stderr?: string, exitCode?: number, timedOut?: boolean }} [args]
+ * @returns {{ sessionId: string|null, text: string, error: object|null, status: number, fileChanges: Array, commandExecutions: Array, toolCalls: Array }}
+ */
+export function normalizeHeadlessResult({ stdoutText = "", stderr = "", exitCode = 0, timedOut = false } = {}) {
+  const envelope = parseHeadlessEnvelope(stdoutText);
+  const sessionId = typeof envelope?.conversation_id === "string" && envelope.conversation_id
+    ? envelope.conversation_id
+    : null;
+  const response = typeof envelope?.response === "string" ? envelope.response : "";
+  const emptyTrail = { fileChanges: [], commandExecutions: [], toolCalls: [] };
+
+  if (timedOut) {
+    return {
+      sessionId,
+      text: response.trim(),
+      error: { message: "Antigravity (agy) timed out before producing a response." },
+      status: 1,
+      ...emptyTrail
+    };
+  }
+
+  if (!envelope) {
+    const detail = stderrDetail(stderr);
+    const message = detail
+      ? `Antigravity (agy) produced no answer. ${detail}`
+      : "Antigravity (agy) produced no answer (unreadable stdout). Ensure the headless agy binary is installed and signed in (launch ~/.local/bin/agy or $AGY_CLI_PATH in a terminal).";
+    return { sessionId: null, text: "", error: { message }, status: exitCode || 1, ...emptyTrail };
+  }
+
+  const answered = response.trim().length > 0;
+  const success = answered && (envelope.status === "SUCCESS" || envelope.status == null);
+  if (success) {
+    return { sessionId, text: response, error: null, status: 0, ...emptyTrail };
+  }
+
+  const errText = typeof envelope.error === "string" && envelope.error.trim()
+    ? envelope.error.trim()
+    : stderrDetail(stderr);
+  const message = errText
+    ? `Antigravity (agy) produced no answer. ${errText}`
+    : "Antigravity (agy) produced no answer (empty response).";
+  return { sessionId, text: "", error: { message }, status: 1, ...emptyTrail };
 }
 
 // ─── Availability & Auth ────────────────────────────────────────────────────
@@ -268,7 +406,7 @@ export function getAntigravityAvailability() {
   } catch (err) {
     return {
       available: false,
-      detail: `Antigravity CLI (agy) not found (tried: ${cli}). Install it from https://antigravity.google and run \`agy\` once to sign in. Error: ${String(err.message ?? err)}`,
+      detail: `Antigravity CLI (agy) not found (tried: ${cli}). Install the headless CLI from https://antigravity.google/cli and sign in by launching that binary (~/.local/bin/agy, or $AGY_CLI_PATH) in a terminal. \`agy\` on PATH may be the IDE launcher. Error: ${String(err.message ?? err)}`,
       version: null
     };
   }
@@ -304,45 +442,15 @@ export function getAntigravityAuthStatus() {
     authenticated: false,
     loggedIn: false,
     method: null,
-    detail: "Antigravity (agy) is not signed in. Run `agy` once interactively and sign in with your Google account."
+    detail: "Antigravity (agy) is not signed in. Launch the headless binary (~/.local/bin/agy, or $AGY_CLI_PATH) in a terminal and sign in with your Google account. `agy` on PATH may be the IDE launcher."
   };
 }
 
 // ─── Headless turn ────────────────────────────────────────────────────────────
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function readTextSafe(p) {
-  try {
-    return fs.readFileSync(p, "utf8");
-  } catch {
-    return "";
-  }
-}
-
 /**
- * Read the transcript with a short retry — by process close it is normally fully
- * written, but a brief lag (and the Windows `.tmp→.pb` rename race) can leave it
- * a beat behind. Returns as soon as a final answer is present.
- */
-async function readTranscriptWithRetry(appDataDir, convId, attempts = 6, delayMs = 120) {
-  const p = transcriptPath(appDataDir, convId);
-  let last = "";
-  for (let i = 0; i < attempts; i++) {
-    const text = readTextSafe(p);
-    if (text) {
-      last = text;
-      if (deriveFinalMessage(parseTranscript(text))) return text;
-    }
-    await sleep(delayMs);
-  }
-  return last;
-}
-
-let logCounter = 0;
-
-/**
- * Run a single prompt through `agy -p` and recover the answer from the transcript.
+ * Run a single prompt through `agy -p --output-format json` and read the envelope
+ * from stdout.
  *
  * @param {string} cwd
  * @param {string} prompt
@@ -354,14 +462,12 @@ export async function runHeadlessAgyTurn(cwd, prompt, options = {}) {
   const cli = findAgyBinary();
   const watchdogMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 300000;
   const printTimeout = options.printTimeout ?? `${Math.max(30, Math.round(watchdogMs / 1000) - 10)}s`;
-  const logFile = path.join(os.tmpdir(), `agy-${process.pid}-${Date.now()}-${logCounter++}.log`);
-  const args = buildHeadlessArgs({ prompt, cwd, logFile, printTimeout, role });
+  const args = buildHeadlessArgs({ prompt, cwd, printTimeout, role, model: options.model, write: options.write === true });
+  const modelLabel = resolveAgyModel(options.model);
 
-  // No live token stream is possible (stdout is empty by design), so emit a single
-  // phase ping for the progress sink that task.mjs forwards to the user.
   if (options.onStream) {
     try {
-      options.onStream({ type: "phase", message: "Antigravity: running agy -p (Gemini 3.5 Flash)", phase: "agy" });
+      options.onStream({ type: "phase", message: `Antigravity: running agy -p (${modelLabel})`, phase: "agy" });
     } catch {
       // best-effort
     }
@@ -381,9 +487,8 @@ export async function runHeadlessAgyTurn(cwd, prompt, options = {}) {
       child = spawnCommand(cli, args, {
         cwd,
         env: buildSpawnEnvironment(options.env ?? process.env),
-        // stdin closed (avoids inherited-stdin hangs); stdout ignored (empty by
-        // the upstream bug); stderr captured for startup/validation errors.
-        stdio: ["ignore", "ignore", "pipe"],
+        // stdin closed (avoids inherited-stdin hangs). stdout is the JSON envelope.
+        stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true
       });
     } catch (error) {
@@ -391,7 +496,13 @@ export async function runHeadlessAgyTurn(cwd, prompt, options = {}) {
       return;
     }
 
+    let stdoutText = "";
     let stderrText = "";
+    if (child.stdout) {
+      child.stdout.on("data", (chunk) => {
+        stdoutText += chunk.toString();
+      });
+    }
     if (child.stderr) {
       child.stderr.on("data", (chunk) => {
         stderrText += chunk.toString();
@@ -414,18 +525,9 @@ export async function runHeadlessAgyTurn(cwd, prompt, options = {}) {
       finish({ sessionId: null, text: "", error, status: 1, fileChanges: [], commandExecutions: [], toolCalls: [] });
     });
 
-    child.on("close", async (code) => {
+    child.on("close", (code) => {
       clearTimeout(watchdog);
-      const logText = readTextSafe(logFile);
-      const convId = parseConversationId(logText);
-      const appDataDir = parseAppDataDir(logText) || defaultAppDataDir();
-      const transcriptText = convId ? await readTranscriptWithRetry(appDataDir, convId) : "";
-      try {
-        fs.rmSync(logFile, { force: true });
-      } catch {
-        // best-effort cleanup
-      }
-      finish(normalizeAgyOutcome({ logText, transcriptText, stderr: stderrText, exitCode: code ?? 0, timedOut }));
+      finish(normalizeHeadlessResult({ stdoutText, stderr: stderrText, exitCode: code ?? 0, timedOut }));
     });
   });
 }

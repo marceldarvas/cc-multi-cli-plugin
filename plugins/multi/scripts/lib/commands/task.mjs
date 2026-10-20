@@ -510,9 +510,10 @@ export async function executeTaskRun(request) {
   }
 
   // ── Antigravity dispatch path ───────────────────────────────────────────────
-  // When --cli antigravity is used, invoke Google's `agy` CLI in headless print
-  // mode and read the answer back from the conversation transcript (read-only
-  // research/explore roles; agy's stdout is empty under non-TTY — see the adapter).
+  // When --cli antigravity is used, invoke the headless `agy` CLI
+  // (`agy -p --output-format json`) and read the JSON envelope from stdout.
+  // Shipped roles are read-only research/explore. The adapter defaults the model
+  // to gemini-3.8-flash-high unless request.model is set.
   if (cli === "antigravity") {
     const agAvail = antigravity.adapter.isAvailable();
     if (!agAvail.available) {

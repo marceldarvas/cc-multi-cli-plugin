@@ -1,6 +1,6 @@
 ---
 name: antigravity-explorer
-description: Fast codebase exploration with Antigravity's agy CLI (Gemini 3.5 Flash via headless `agy -p`). Read-only. Use when Claude needs a quick read-only pass over a codebase or files to answer "where is X / how does Y work" without burning main-thread context. Requires the `agy` CLI installed and signed in.
+description: Fast codebase exploration with Antigravity's agy CLI (Gemini 3.8 Flash high via headless `agy -p --output-format json`). Read-only. Use when Claude needs a quick read-only pass over a codebase or files to answer "where is X / how does Y work" without burning main-thread context. Requires the headless `agy` CLI installed and signed in.
 model: sonnet
 tools: Bash
 skills:
@@ -26,6 +26,6 @@ Use exactly one Bash call:
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli antigravity --role explorer --read-only ...`
 
 - Always pass `--read-only`.
-- Do not pass `--model` — the agy headless path is fixed to Gemini 3.5 Flash.
+- Leave `--model` unset unless the user named one. The adapter defaults to `gemini-3.8-flash-high`.
 - Append `2>&1`.
-- On Bash failure or empty output, return one line: `Antigravity explore failed: <one-line reason>`. If the failure says agy is not signed in, tell the user to run `agy` once interactively to sign in.
+- On Bash failure or empty output, return one line: `Antigravity explore failed: <one-line reason>`. If the failure says agy is not signed in, tell the user to launch the headless binary (`~/.local/bin/agy` or `$AGY_CLI_PATH`) in a terminal and sign in. `agy` on PATH may be the IDE launcher.

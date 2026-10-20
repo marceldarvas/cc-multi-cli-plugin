@@ -28,7 +28,7 @@ Run each probe via Bash:
 
 - `codex --version`
 - Cursor: the binary is named `agent` (not `cursor-agent`). Try `agent --version` first. On Windows the installer does NOT add it to PATH — always fall back to `$LOCALAPPDATA/cursor-agent/agent.cmd --version` (a.k.a. `C:/Users/<name>/AppData/Local/cursor-agent/agent.cmd`). Remember whichever path works; use it throughout the rest of setup.
-- Antigravity: the binary is `agy` (Google's Antigravity CLI). Try `agy --version`. On Windows the installer drops it at `$LOCALAPPDATA/agy/bin/agy.exe` and may not add it to PATH. The companion's setup probe (`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" setup --json`) reports whether `agy` is detected. (EXPERIMENTAL; read-only research/explore only.)
+- Antigravity: the headless binary is `agy` from https://antigravity.google/cli, usually `~/.local/bin/agy` (Windows: `$LOCALAPPDATA/agy/bin/agy.exe`). Probe that path, or `$AGY_CLI_PATH --version`. `agy` on PATH may be the IDE launcher. The companion's setup probe (`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" setup --json`) reports whether `agy` is detected. Read-only research/explore only.
 - OpenCode: the binary is `opencode`. Try `opencode --version`. On Windows, npm installs a `.cmd` shim; a stale bun `opencode.exe` in PATH may shadow it — the adapter resolves only the `.cmd` shim, never the `.exe`. Install via `npm install -g opencode-ai`.
 - Cline: the binary is `cline`. Try `cline --version`. Adds `/cline:review` only. Install from https://github.com/cline/cline (or the Cline VS Code extension's headless CLI) and configure the `cline-pass` provider.
 
@@ -36,7 +36,7 @@ Tabulate which succeed. For each failure, tell the user the install command:
 
 - Codex: `npm install -g @openai/codex`
 - Cursor: `curl https://cursor.com/install -fsS | bash` (Unix) or `irm 'https://cursor.com/install?win32=true' | iex` (Windows PowerShell). After install, the binary lives at `$LOCALAPPDATA/cursor-agent/agent.cmd` on Windows and is not on PATH.
-- Antigravity: install the **`agy` CLI** from https://antigravity.google, then run `agy` once interactively to sign in with your Google account. The desktop app is not required.
+- Antigravity: install the headless **`agy` CLI** from https://antigravity.google/cli, then launch that binary (`~/.local/bin/agy`, or `$AGY_CLI_PATH`) in a terminal to sign in. `agy` on PATH may be the IDE launcher. The desktop app is not required.
 - OpenCode: `npm install -g opencode-ai`.
 - Cline: install the `cline` CLI from https://github.com/cline/cline and configure `cline-pass` / `deepseek-v4.1-flash`.
 
@@ -144,10 +144,10 @@ For each installed CLI, check auth:
 
 - Codex: `codex login status` (NOT `codex whoami` — that doesn't exist)
 - Cursor: invoke the resolved binary path from Step 1 (NOT a literal `agent status`). On Windows that's typically `"C:/Users/<n>/AppData/Local/cursor-agent/agent.cmd" status`. Quote the path. Use the variable you stashed in Step 1 throughout the rest of the file — never assume `agent` is on PATH.
-- Antigravity: sign in by running `agy` once interactively (it opens a Google OAuth browser flow; creds are stored in the OS keyring / `~/.gemini`). The companion's setup probe reports whether `agy` appears signed in; if not, tell the user to run `agy` once and sign in.
+- Antigravity: sign in by launching the headless binary (`~/.local/bin/agy`, or `$AGY_CLI_PATH`) in a terminal (Google OAuth; creds are stored in the OS keyring / `~/.gemini`). `agy` on PATH may be the IDE launcher. The companion's setup probe reports whether `agy` appears signed in; if not, tell the user to launch that binary and sign in.
 - OpenCode: `opencode auth list` (authenticated iff exit 0 and output contains a `●` provider bullet). If not authenticated, run `opencode auth login` for the desired provider. **Token-offload warning:** if the user configures an `anthropic/*` model, those calls hit the same Claude billing as Claude Code — zero token offload. Real offload comes from `opencode/*` (Zen), `openai/*`, `google/*`, `github-copilot/*`, or `ollama/*` models. The adapter default is `opencode/claude-opus-4-8` (Zen, billed separately). **MCP note:** OpenCode reads MCP servers from its own `opencode.json` config, NOT from the wizard-managed files. OpenCode's interactive wizard (`opencode` run normally) can configure MCP servers; the `/multi:setup` wizard does NOT manage OpenCode's `opencode.json`. Remind the user to wire Exa/Context7 into OpenCode via `opencode`'s own MCP setup if they want those tools available there.
 
-If unauthenticated, give the exact login command (or, for Antigravity, "run `agy` once and sign in"; for OpenCode, "run `opencode auth login`") and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
+If unauthenticated, give the exact login command (or, for Antigravity, "launch `~/.local/bin/agy` or `$AGY_CLI_PATH` in a terminal and sign in"; for OpenCode, "run `opencode auth login`") and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
 
 ## Step 3 — Collect API keys (Exa required, Context7 optional)
 
@@ -441,7 +441,7 @@ cc-multi-cli-plugin setup complete.
 Per-CLI status:
   ✓ Codex: configured (exa, context7)
   ⚠ Cursor: skipped — not authenticated (run `agent status`)
-  ⚠ Antigravity: `agy` not detected — install the agy CLI and run `agy` once to sign in (no MCP config managed by this wizard)
+  ⚠ Antigravity: headless `agy` not detected — install it from https://antigravity.google/cli and sign in by launching ~/.local/bin/agy or $AGY_CLI_PATH in a terminal (no MCP config managed by this wizard)
   ⚠ OpenCode: detected but MCP config not managed — configure Exa/Context7 via OpenCode's own wizard; run `opencode auth list` to verify auth
 
 Drift cleaned this run:

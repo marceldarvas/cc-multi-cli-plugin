@@ -63,7 +63,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   }
   const antigravityCli = clis.find((entry) => entry.name === "antigravity");
   if (antigravityCli && !antigravityCli.available) {
-    nextSteps.push("Antigravity: install the `agy` CLI (https://antigravity.google) and run `agy` once interactively to sign in. Read-only research/explore only (EXPERIMENTAL).");
+    nextSteps.push("Antigravity: install the headless `agy` CLI (https://antigravity.google/cli) and sign in by launching ~/.local/bin/agy (or $AGY_CLI_PATH) in a terminal. `agy` on PATH may be the IDE launcher. Read-only research/explore only.");
   }
   const opencodeCli = clis.find((entry) => entry.name === "opencode");
   if (opencodeCli && !opencodeCli.available) {

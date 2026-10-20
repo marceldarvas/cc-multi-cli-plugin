@@ -99,10 +99,10 @@ with no in-flight turn and no activity for `CODEX_COMPANION_BROKER_IDLE_MS`
   `cline -p --json` with the companion-resolved git diff as the prompt. `-p` is
   `--plan` and is what keeps Cline from writing files. Default model
   `cline-pass/deepseek-v4.1-flash`.
-- **Antigravity** — headless `agy -p` (`lib/adapters/antigravity.mjs`). `agy`'s
-  headless stdout is empty upstream (gemini-cli#27466), so the adapter learns the
-  conversation id from a per-invocation `--log-file` and recovers the answer from
-  the on-disk transcript JSONL. Read-only research/explore only (EXPERIMENTAL).
+- **Antigravity** — headless `agy -p --output-format json` (`lib/adapters/antigravity.mjs`).
+  The answer is the JSON envelope on stdout. Default model `gemini-3.8-flash-high`;
+  a non-blank `--model` overrides it. Binary order is `AGY_CLI_PATH`, then the
+  official install when that file exists, then PATH. Read-only research/explore only.
 - **OpenCode** — headless `opencode run --format json` (`lib/adapters/opencode.mjs`),
   spawning the npm `opencode.cmd` shim with the prompt on stdin and parsing the
   NDJSON event stream (one JSON object per line). Read-only roles (`research`,
