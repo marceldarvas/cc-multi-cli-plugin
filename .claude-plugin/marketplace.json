@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Cursor, Antigravity, OpenCode, and Cline CLIs from Claude Code.",
-    "version": "0.1.12"
+    "version": "0.1.13"
   },
   "plugins": [
     {
       "name": "multi",
       "description": "Hub — companion runtime, subagents, setup wizard, customization skills. Install first.",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "author": {
         "name": "greenpolo"
       },
@@ -30,7 +30,7 @@
     {
       "name": "cursor",
       "description": "Adds /cursor:delegate, /cursor:research, /cursor:explore, /cursor:review. Requires multi.",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "author": {
         "name": "greenpolo"
       },
