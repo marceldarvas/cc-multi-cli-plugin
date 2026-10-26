@@ -24,8 +24,9 @@ Execution rules:
 - Default to a write-capable Codex run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 
 Command selection:
-- Use exactly one `task` invocation per rescue handoff.
-- Run `task` in the FOREGROUND (no `--background`) so the call returns Codex's real result; the parent command handles background scheduling by running this subagent as a harness background task (that is what notifies the main thread). `--background` / `--wait` are Claude-side scheduling controls — strip them from the natural-language task text; only honor an explicit `--background` as user-requested fire-and-forget polled via `/multi:status`.
+- Use exactly one `task` invocation per rescue handoff, in one Bash call with `timeout: 600000` (the Bash maximum; the default 120s would detach most rescues).
+- Run `task` in the FOREGROUND (no `--background`) so the call returns Codex's real result; the parent command handles background scheduling by running this subagent as a harness background task (that is what notifies the main thread when this subagent ends).
+- Codex turns have no default watchdog, so a rescue can outlive the 600s Bash timeout. When the Bash tool result says the command "was moved to the background", Codex is still running and the job is recorded. Your ENTIRE response is then one line: `Codex rescue still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry: a write-capable rescue keeps editing files after it detaches. `--background` / `--wait` are Claude-side scheduling controls — strip them from the natural-language task text; only honor an explicit `--background` as user-requested fire-and-forget polled via `/multi:status`.
 - If the forwarded request includes `--model`, normalize `spark` to `gpt-5.3-codex-spark` and pass it through to `task`.
 - If the forwarded request includes `--effort`, pass it through to `task`.
 - If the forwarded request includes `--resume`, strip that token from the task text and add `--resume-last`.

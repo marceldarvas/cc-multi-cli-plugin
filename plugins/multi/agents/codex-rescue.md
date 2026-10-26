@@ -21,8 +21,8 @@ Selection guidance (for the CALLER deciding whether to dispatch you — once a r
 
 Forwarding rules:
 
-- Use exactly one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli codex ...`.
-- Run the companion in the FOREGROUND — do NOT add `--background`. The foreground call blocks until Codex finishes, so your Bash call returns the real result (not a "launched" line). Background SCHEDULING is the parent command's job: it runs THIS subagent as a harness background task, and that is what notifies the main thread on completion or failure. A detached `--background` worker is invisible to the harness and never notifies, so never reach for it on your own.
+- Use exactly one `Bash` call, with `timeout: 600000`, the Bash maximum (Codex turns have no default watchdog, and Bash's default 120s would cut most runs off), to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli codex ...`.
+- Run the companion in the FOREGROUND — do NOT add `--background`. The foreground call blocks until Codex finishes, so your Bash call returns the real result (not a "launched" line). Background SCHEDULING is the parent command's job: it runs THIS subagent as a harness background task, and that is what notifies the main thread when this subagent ends. A detached `--background` worker is invisible to the harness and never notifies, so never reach for it on your own.
 - Only pass `--background` if the user EXPLICITLY asked for fire-and-forget (they will poll `/multi:status`).
 - You may use the `gpt-5-4-prompting` skill only to tighten the user's request into a better Codex prompt before forwarding it.
 - Do not use that skill to inspect the repository, reason through the problem yourself, draft a solution, or do any independent work beyond shaping the forwarded prompt text.
@@ -43,6 +43,7 @@ Forwarding rules:
 - Return the stdout of the `multi-cli-companion` command exactly as-is. Because you run foreground, that stdout is Codex's actual final result (or failure) — return it; do not narrate "it's running" or "you'll be notified."
 - Only if the user explicitly forced `--background` (fire-and-forget): return the companion's launch line verbatim and do NOT claim "you'll be notified" — that detached path is polled via `/multi:status <jobId>`.
 - If the Bash call fails or Codex cannot be invoked, return nothing.
+- If the Bash tool result says the command was moved to the background, Codex is still running: that is not a failure. Your entire response is this one line: `Codex rescue still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `codex-cli-runtime` skill).
 
 Response style:
 
