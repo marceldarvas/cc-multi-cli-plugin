@@ -1,3 +1,5 @@
+// ABOUTME: Runs Cursor headless and ACP turns with role-specific permissions.
+// ABOUTME: Manages review isolation and per-turn Cursor workspace-trust cleanup.
 /**
  * Cursor adapter — availability checks, auth status, and running prompts
  * through Cursor's headless print mode (`cursor-agent -p`).
@@ -25,12 +27,13 @@
  */
 
 import { execSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import readline from "node:readline";
 import process from "node:process";
 
+import { sweepStaleCursorTrust, trackCursorTrust } from "../cursor-trust.mjs";
 import { envNumber } from "../env.mjs";
 import { runCommand, spawnCommand, terminateProcessTree } from "../process.mjs";
 import { buildSpawnEnvironment } from "../acp-client.mjs";
@@ -555,6 +558,7 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
   const slackSec = Number.isFinite(options.watchdogSlackSec) ? options.watchdogSlackSec : WATCHDOG_SLACK_SECS;
   const watchdogMs = (timeoutSec + slackSec) * 1000;
 
+  const cleanupTrust = trackCursorTrust(cwd, buildSpawnEnvironment(options.env ?? process.env));
   return await new Promise((resolve) => {
     let settled = false;
     let watchdog = null;
@@ -656,7 +660,7 @@ export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
     } catch {
       // stdin may already be closed if the child errored on spawn.
     }
-  });
+  }).finally(cleanupTrust);
 }
 
 /**
@@ -951,6 +955,7 @@ const REVIEW_WORKSPACE_PREFIX = "cursor-review-ws-";
 const REVIEW_CONFIG_PREFIX = "cursor-review-cfg-";
 const READ_ONLY_CONFIG_PREFIX = "cursor-readonly-cfg-";
 const TEMP_DIR_PATTERN = /^cursor-(?:review-(?:ws|cfg)|readonly-cfg)-(\d+)-/;
+const REVIEW_WORKSPACE_PATTERN = new RegExp(`^${REVIEW_WORKSPACE_PREFIX}(\\d+)-`);
 
 function processIsAlive(pid) {
   try {
@@ -966,13 +971,14 @@ function processIsAlive(pid) {
 // and its temp dirs (a review's config dir holds Cursor's transcript of the
 // diff) stay behind. Each new turn removes dirs whose owning process is gone;
 // a live turn's dirs are never touched, however long it has been running.
-function sweepOrphanedCursorDirs() {
+// It then removes the Cursor trust grants those abandoned review workspaces left.
+function sweepOrphanedCursorDirs(env = process.env) {
   const root = tmpdir();
   let entries;
   try {
     entries = readdirSync(root);
   } catch {
-    return;
+    entries = [];
   }
   for (const name of entries) {
     const owner = TEMP_DIR_PATTERN.exec(name);
@@ -983,6 +989,19 @@ function sweepOrphanedCursorDirs() {
       // Raced with another sweep.
     }
   }
+  sweepStaleCursorTrust(buildSpawnEnvironment(env), isAbandonedReviewWorkspace);
+}
+
+function isAbandonedReviewWorkspace(workspacePath) {
+  const tempRoots = [tmpdir()];
+  try {
+    tempRoots.push(realpathSync(tmpdir()));
+  } catch {
+    // An unresolvable tmpdir still matches by its plain path.
+  }
+  if (!tempRoots.includes(dirname(resolvePath(workspacePath)))) return false;
+  const owner = REVIEW_WORKSPACE_PATTERN.exec(basename(workspacePath));
+  return Boolean(owner) && !processIsAlive(Number(owner[1]));
 }
 
 /** Write the deny-everything Cursor CLI config a review runs under into `configDir`. */
@@ -1025,7 +1044,7 @@ export function writeReadOnlyConfig(configDir, role) {
  * @param {{ model?: string, env?: NodeJS.ProcessEnv, timeoutSec?: number, watchdogSlackSec?: number }} [options]
  */
 export async function runCursorReview(diffPrompt, options = {}) {
-  sweepOrphanedCursorDirs();
+  sweepOrphanedCursorDirs(options.env ?? process.env);
   const workspace = mkdtempSync(join(tmpdir(), `${REVIEW_WORKSPACE_PREFIX}${process.pid}-`));
   let configDir = null;
   try {
@@ -1069,7 +1088,7 @@ export async function invokeCursor(cwd, prompt, options = {}) {
   if (!isReadOnlyRole(options.role ?? "delegate") || options.env?.CURSOR_CONFIG_DIR) {
     return dispatchCursorTurn(cwd, prompt, options);
   }
-  sweepOrphanedCursorDirs();
+  sweepOrphanedCursorDirs(env);
   const configDir = mkdtempSync(join(tmpdir(), `${READ_ONLY_CONFIG_PREFIX}${process.pid}-`));
   try {
     writeReadOnlyConfig(configDir, options.role);
