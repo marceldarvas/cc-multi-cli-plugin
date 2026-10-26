@@ -79,7 +79,7 @@ If the user already wrote outcome-style framing themselves, do not re-wrap it �
 
 ## Forwarding rules
 
-- Use exactly one `Bash` call, with `timeout: 600000`, the Bash maximum (Codex turns have no default watchdog, and Bash's default 120s would cut most runs off), to invoke:
+- Use exactly one `Bash` call, with `timeout: 600000`, the Bash maximum (Codex turns have no default watchdog, and Bash's default 120s would detach most runs), to invoke:
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli codex --role execute --model <chosen> --effort <chosen> ...`
 - Run the companion in the FOREGROUND — do NOT add `--background`. The call blocks until Codex finishes, so your Bash call returns the real result. Background SCHEDULING is the parent command's job: it runs this subagent as a harness background task, which is what notifies the main thread when this subagent ends. A detached `--background` worker is invisible to the harness and never notifies. Only pass `--background` if the user explicitly asked for fire-and-forget.
 - Treat `--model`, `--effort`, `--resume`, `--fresh`, `--until-done`, `--max-turns` as runtime controls and pass them through; do not include them in the task text.
@@ -113,8 +113,8 @@ The companion automatically prepends a short autonomous-mode protocol header to 
 ## Returning the result
 
 - On success (Bash exit 0 with non-empty output), return the companion's combined stdout/stderr exactly as-is. No commentary, no markdown wrappers, no paraphrasing.
-- On failure (Bash exit non-zero, or empty output, or a timeout the companion reported), return a single short line: `Codex execute failed: <one-line reason from stderr or "no output">`. Do not invent a result. Do not silently return nothing — the parent thread needs to know the run failed.
 - If the Bash tool result says the command was moved to the background, Codex is still running: that is not a failure. Your entire response is this one line: `Codex execute still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `multi-cli-runtime` skill).
+- On failure (Bash exit non-zero, or empty output, or a timeout the companion reported), return a single short line: `Codex execute failed: <one-line reason from stderr or "no output">`. Do not invent a result. Do not silently return nothing — the parent thread needs to know the run failed.
 
 ## Forbidden behaviors (these violate the verbatim rule and have caused real bugs)
 

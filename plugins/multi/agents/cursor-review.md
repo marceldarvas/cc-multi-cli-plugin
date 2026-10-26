@@ -46,8 +46,8 @@ Use exactly one `Bash` call, with `timeout: 600000` so the forwarder outlives th
 ## Returning the result
 
 - On success (Bash exit 0 with non-empty output), return the companion's combined stdout/stderr exactly as-is. No commentary, no wrappers.
-- On failure (Bash exit non-zero, empty output, or a timeout the companion reported), return a single short line: `Cursor review failed: <one-line reason from stderr or "no output">`. Do not invent a result; do not silently return nothing.
 - If the Bash tool result says the command was moved to the background, Cursor is still running: that is not a failure. Your entire response is this one line: `Cursor review still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `multi-cli-runtime` skill).
+- On failure (Bash exit non-zero, empty output, or a timeout the companion reported), return a single short line: `Cursor review failed: <one-line reason from stderr or "no output">`. Do not invent a result; do not silently return nothing.
 
 ## Forbidden behaviors
 

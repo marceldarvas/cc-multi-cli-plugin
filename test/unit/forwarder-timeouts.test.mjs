@@ -23,6 +23,16 @@ test("every forwarder runs its companion Bash call with timeout: 600000", () => 
 test("every forwarder reports a detached Bash call as still running, not failed", () => {
   for (const [f, text] of forwarders()) {
     assert.ok(text.includes(STILL_RUNNING), `${f} has no still-running outcome`);
+    // The still-running line names the same lane as the forwarder's failure line.
+    const lane = text.match(/`([A-Za-z]+ [a-z]+) failed:/)?.[1];
+    if (lane) {
+      assert.ok(text.includes(`\`${lane} ${STILL_RUNNING}`), `${f} still-running line does not name ${lane}`);
+    }
+    // It comes before the failure rule, so a detached call is not matched as a failure first.
+    const failureRule = text.search(/^- (Return the companion's stdout verbatim\. )?(On (Bash )?failure|If the Bash call fails)/m);
+    if (failureRule >= 0) {
+      assert.ok(text.indexOf(STILL_RUNNING) < failureRule, `${f} lists the failure rule first`);
+    }
   }
 });
 
@@ -33,10 +43,11 @@ test("both runtime skills define the still-running outcome", () => {
   }
 });
 
-test("no command or forwarder promises a background subagent runs the CLI to completion", () => {
+test("no command, forwarder or skill promises a background subagent runs the CLI to completion", () => {
   const dirs = readdirSync(pluginsDir).flatMap((p) =>
     ["commands", "agents"].map((d) => new URL(`${p}/${d}/`, pluginsDir))
   );
+  dirs.push(...readdirSync(new URL("multi/skills/", pluginsDir)).map((s) => new URL(`multi/skills/${s}/`, pluginsDir)));
   for (const dir of dirs) {
     let files;
     try {

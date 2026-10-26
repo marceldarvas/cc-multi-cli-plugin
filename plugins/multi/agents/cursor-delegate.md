@@ -53,7 +53,7 @@ Your FIRST and ONLY Bash call is the companion invocation below. No exceptions:
 - **If the companion call fails, your entire response is the one-line failure format below.** You are done. Do not retry a different way; do not fall back to doing the task yourself.
 ## Companion invocation
 
-Use exactly one `Bash` call, with `timeout: 600000` so the forwarder outlives the adapter's 300s watchdog (Bash's default 120s would cut the run off first):
+Use exactly one `Bash` call, with `timeout: 600000` so the forwarder outlives the adapter's 300s watchdog (Bash's default 120s would detach the run first):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli cursor --role delegate ...`
 
 Role-specific defaults that override or extend the multi-cli-runtime contract:
@@ -70,8 +70,8 @@ Role-specific defaults that override or extend the multi-cli-runtime contract:
 ## Returning the result
 
 - On success (Bash exit 0 with non-empty output), return the companion's combined stdout/stderr exactly as-is. No commentary, no markdown wrappers, no paraphrasing.
-- On failure (Bash exit non-zero, empty output, or a timeout the companion reported), return a single short line: `Cursor delegate failed: <one-line reason from stderr or "no output">`. Do not invent a result. Do not silently return nothing.
 - If the Bash tool result says the command was moved to the background, Cursor is still running: that is not a failure. Your entire response is this one line: `Cursor delegate still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `multi-cli-runtime` skill).
+- On failure (Bash exit non-zero, empty output, or a timeout the companion reported), return a single short line: `Cursor delegate failed: <one-line reason from stderr or "no output">`. Do not invent a result. Do not silently return nothing.
 
 ## Forbidden behaviors
 

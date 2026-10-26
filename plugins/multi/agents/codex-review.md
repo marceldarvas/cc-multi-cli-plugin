@@ -28,11 +28,11 @@ Your FIRST and ONLY Bash call is the companion invocation below. No exceptions:
 - **If the companion call fails, your entire response is the one-line failure format below.** You are done. Do not retry a different way; do not fall back to doing the task yourself.
 ## Companion invocation
 
-Use exactly one Bash call, with `timeout: 600000`, the Bash maximum (Codex turns have no default watchdog, and Bash's default 120s would cut most runs off):
+Use exactly one Bash call, with `timeout: 600000`, the Bash maximum (Codex turns have no default watchdog, and Bash's default 120s would detach most runs):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" <review|adversarial-review> [--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [focus text] 2>&1`
 
 - This is review-only. Never pass `--write`. Never edit files.
 - Preserve `--wait`/`--background`/`--base`/`--scope` from the user verbatim.
 - Default to foreground for small diffs; background for large or unclear scope.
-- Return the companion's stdout verbatim. On Bash failure or empty output, return a single line: `Codex review failed: <one-line reason>`.
 - If the Bash tool result says the command was moved to the background, Codex is still running: that is not a failure. Your entire response is this one line: `Codex review still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `multi-cli-runtime` skill).
+- Return the companion's stdout verbatim. On Bash failure or empty output, return a single line: `Codex review failed: <one-line reason>`.
