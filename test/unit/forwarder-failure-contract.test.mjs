@@ -24,13 +24,21 @@ function commands() {
   return readdirSync(pluginsDir).flatMap((p) => {
     try {
       return mdFiles(new URL(`${p}/commands/`, pluginsDir), `${p}/commands/`);
-    } catch {
-      return [];
+    } catch (err) {
+      // Plugins without a commands/ directory have no commands; any other error is real.
+      if (err.code === "ENOENT" || err.code === "ENOTDIR") return [];
+      throw err;
     }
   });
 }
 
 const command = (path) => readFileSync(new URL(path, pluginsDir), "utf8");
+
+function adapterConstant(path, name) {
+  const m = command(path).match(new RegExp(`const ${name} = (\\d+);`));
+  assert.ok(m, `${name} not found in ${path}; update this guard`);
+  return Number(m[1]);
+}
 
 test("every forwarder fails with one line on Bash failure or empty output", () => {
   for (const [f, text] of agents()) {
@@ -46,13 +54,13 @@ test("every forwarder fails with one line on Bash failure or empty output", () =
 test("no forwarder or runtime skill returns nothing on failure", () => {
   for (const [f, text] of [...agents(), ...runtimeSkills()]) {
     // "Do not silently return nothing" is the rule; any other "return nothing" is the bug.
-    const bare = text.replace(/[Nn]ever silently return nothing|[Dd]o not (silently )?return nothing/g, "");
+    const bare = text.replace(/[Nn]ever (silently )?return nothing|[Dd]o not (silently )?return nothing/g, "");
     assert.doesNotMatch(bare, /return nothing/, `${f} returns nothing`);
   }
 });
 
 test("the companion's --background is passed only for explicit fire-and-forget", () => {
-  for (const [f, text] of [...agents(), ...commands()]) {
+  for (const [f, text] of [...agents(), ...commands(), ...runtimeSkills()]) {
     for (const line of text.split("\n").filter((l) => /pass `--background`/i.test(l))) {
       assert.match(line, /fire-and-forget/, `${f} passes --background without fire-and-forget: ${line.trim()}`);
     }
@@ -66,8 +74,7 @@ test("the companion's --background is passed only for explicit fire-and-forget",
 test("delegate commands state each transport's watchdog as the adapters set it", () => {
   const cursor = command("cursor/commands/delegate.md");
   const timeout = resolveTimeoutSec(undefined, "delegate", {});
-  const slack = Number(readFileSync(new URL("multi/scripts/lib/adapters/cursor.mjs", pluginsDir), "utf8")
-    .match(/const WATCHDOG_SLACK_SECS = (\d+);/)[1]);
+  const slack = adapterConstant("multi/scripts/lib/adapters/cursor.mjs", "WATCHDOG_SLACK_SECS");
   assert.match(cursor, new RegExp(`${timeout}s plus ${slack}s slack`), "cursor delegate misstates the turn watchdog");
   assert.match(cursor, /CURSOR_TIMEOUT_SECS/, "cursor delegate omits the timeout override");
   assert.match(cursor, /default headless transport each Cursor turn/, "cursor delegate does not scope its watchdog claim");
@@ -75,8 +82,7 @@ test("delegate commands state each transport's watchdog as the adapters set it",
   const opencode = command("opencode/commands/delegate.md");
   assert.match(opencode, /headless transport OpenCode has no turn watchdog/, "opencode delegate does not scope its watchdog claim");
 
-  const acpSecs = Number(readFileSync(new URL("multi/scripts/lib/acp/client.mjs", pluginsDir), "utf8")
-    .match(/const DEFAULT_INACTIVITY_MS = (\d+);/)[1]) / 1000;
+  const acpSecs = adapterConstant("multi/scripts/lib/acp/client.mjs", "DEFAULT_INACTIVITY_MS") / 1000;
   for (const [name, text] of [["cursor", cursor], ["opencode", opencode]]) {
     assert.match(text, new RegExp(`${acpSecs}s by default without a session update, set by \`MULTI_ACP_INACTIVITY_MS\``), `${name} delegate misstates the ACP watchdog`);
   }
