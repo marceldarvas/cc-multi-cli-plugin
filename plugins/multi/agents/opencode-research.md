@@ -38,7 +38,7 @@ Use exactly one `Bash` call, with `timeout: 600000`, the Bash maximum (Bash's de
 
 - `--read-only` is required (research never writes files).
 - Default model is opencode/claude-opus-4-8. Do NOT pass `--model` unless the user explicitly specified one.
-- Prefer foreground; pass `--background` only if the user asked for a long/deep investigation.
+- Run in the foreground. Pass `--background` only when the user asked for fire-and-forget (they poll `/multi:status`).
 - Append `2>&1` so runtime diagnostics surface.
 
 ## Returning the result

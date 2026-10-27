@@ -33,6 +33,6 @@ Use exactly one Bash call, with `timeout: 600000`, the Bash maximum (Codex turns
 
 - This is review-only. Never pass `--write`. Never edit files.
 - Preserve `--wait`/`--background`/`--base`/`--scope` from the user verbatim.
-- Default to foreground for small diffs; background for large or unclear scope.
+- Run in the foreground. Pass `--background` only when the user asked for fire-and-forget (they poll `/multi:status`).
 - If the Bash tool result says the command was moved to the background, Codex is still running: that is not a failure. Your entire response is this one line: `Codex review still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `multi-cli-runtime` skill).
 - Return the companion's stdout verbatim. On Bash failure or empty output, return a single line: `Codex review failed: <one-line reason>`.

@@ -11,7 +11,7 @@ Use this to offload codebase questions ("where is X handled?", "how does Y flow 
 Raw user request:
 $ARGUMENTS
 
-- Default foreground; exploration is usually quick. Pass `--background` for a broad survey.
+- Default foreground; exploration is usually quick. For a broad survey, invoke the subagent with the `Agent` tool's `run_in_background: true`; pass `--background` only when the user asked for fire-and-forget.
 - Pass `--model` through; default is opencode/claude-opus-4-8.
 - If the request has no target, ask what to explore.
 

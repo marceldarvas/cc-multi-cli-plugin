@@ -313,8 +313,8 @@ export async function executeTaskRun(request) {
       ? [...aggregatedTouchedFiles]
       : ((lastResult?.fileChanges ?? []).map((fc) => fc.path));
     // Surface in-protocol errors via the rendered failure message, not a non-zero
-    // exit code — a non-zero exit trips the forwarding subagent's "if Bash fails,
-    // return nothing" rule and silently swallows the result.
+    // exit code — a non-zero exit trips the forwarding subagent's failure rule,
+    // which replaces the result with a one-line failure.
     const exitStatus = 0;
     // The job record still has to say the run failed (a watchdog kill used to
     // read as completed), so the record status travels separately from the exit.
@@ -470,8 +470,8 @@ export async function executeTaskRun(request) {
       ? [...aggregatedTouchedFiles]
       : ((lastResult?.fileChanges ?? []).map((fc) => fc.path));
     // Surface in-protocol errors via the rendered failure message, not a non-zero
-    // exit code — a non-zero exit trips the forwarding subagent's "if Bash fails,
-    // return nothing" rule and silently swallows the result.
+    // exit code — a non-zero exit trips the forwarding subagent's failure rule,
+    // which replaces the result with a one-line failure.
     const exitStatus = 0;
 
     const rendered = renderTaskResult(
