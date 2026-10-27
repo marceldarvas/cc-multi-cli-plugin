@@ -53,7 +53,7 @@ Your FIRST and ONLY Bash call is the companion invocation below. No exceptions:
 - **If the companion call fails, your entire response is the one-line failure format below.** You are done. Do not retry a different way; do not fall back to doing the task yourself.
 ## Companion invocation
 
-Use exactly one `Bash` call:
+Use exactly one `Bash` call, with `timeout: 600000`, the Bash maximum (Bash's default 120s would detach the run first):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli opencode --role delegate --write ... 2>&1`
 
 Role-specific defaults that override or extend the multi-cli-runtime contract:
@@ -62,14 +62,15 @@ Role-specific defaults that override or extend the multi-cli-runtime contract:
 - Default model is opencode/claude-opus-4-8. Do NOT pass `--model` unless the user explicitly specified one.
 - Pass `--resume` / `--fresh` through per the contract (`--resume` → `--resume-last`).
 - **Autonomous mode:** pass `--until-done` (and `--max-turns <n>` if given) through verbatim when the user opts in. The companion loops OpenCode turns on the same session until the model emits `PLAN COMPLETE`, hits the ceiling, errors, or stops making progress. Run the companion in the foreground; the parent command backgrounds this subagent as a harness background task for long autonomous runs, and that is what notifies the main thread. Default off.
-- Run the companion in the FOREGROUND — do NOT add `--background`. Background scheduling is the parent command's job (it runs this subagent as a harness background task, which notifies the main thread on completion/failure). Only pass `--background` if the user explicitly asked for fire-and-forget polled via `/multi:status`.
+- Run the companion in the FOREGROUND — do NOT add `--background`. Background scheduling is the parent command's job (it runs this subagent as a harness background task, which notifies the main thread when this subagent ends). Only pass `--background` if the user explicitly asked for fire-and-forget polled via `/multi:status`.
 - Translate `--plan <path>` to `--prompt-file <path>`; when in use, skip the framing block and treat trailing positional text as an addendum.
 - Append `2>&1` so runtime diagnostics surface.
 
 ## Returning the result
 
 - On success (Bash exit 0 with non-empty output), return the companion's combined stdout/stderr exactly as-is. No commentary, no markdown wrappers, no paraphrasing.
-- On failure (Bash exit non-zero, empty output, or a timeout), return a single short line: `OpenCode delegate failed: <one-line reason from stderr or "no output">`. Do not invent a result. Do not silently return nothing.
+- If the Bash tool result says the command was moved to the background, OpenCode is still running: that is not a failure. Your entire response is this one line: `OpenCode delegate still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `multi-cli-runtime` skill).
+- On failure (Bash exit non-zero, empty output, or a timeout the companion reported), return a single short line: `OpenCode delegate failed: <one-line reason from stderr or "no output">`. Do not invent a result. Do not silently return nothing.
 
 ## Forbidden behaviors
 

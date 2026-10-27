@@ -19,12 +19,13 @@ Where `<cli>` is one of `codex|cursor|antigravity|opencode` (or any CLI added vi
 - Each `multi:*` subagent is a forwarder, not an orchestrator. Its only job is to invoke the companion once and return that stdout unchanged.
 - Prefer the helper over hand-rolled `git`, direct CLI strings (`cursor agent acp`, `codex exec`), or any other Bash activity.
 - Use exactly one Bash call per subagent dispatch. Do not chain `cat`, `sleep`, polling loops, or follow-up `node` calls.
+- Run that call with `timeout: 600000`, the Bash maximum. Bash defaults to 120s, and a call that outlives its timeout is moved to the background, not killed (see "Detached runs").
 
 ## Routing flag handling
 
 Treat these as runtime controls — strip them from the task text before forwarding, then re-add them as flags on the companion call:
 
-- `--background` / `--wait` — `--wait`/foreground is the default and is what you should run: the companion blocks until the CLI finishes, so your Bash call returns the real result. For long-running work, the PARENT command schedules background execution by running this subagent as a harness background task (which notifies the main thread on completion/failure) — NOT by passing `--background`. The companion's `--background` detaches a worker the harness can't see (no notification) and is only for explicit user-requested fire-and-forget polled via `/multi:status`.
+- `--background` / `--wait` — `--wait`/foreground is the default and is what you should run: the companion blocks until the CLI finishes, so your Bash call returns the real result. For long-running work, the PARENT command schedules background execution by running this subagent as a harness background task (which notifies the main thread when this subagent ends) — NOT by passing `--background`. The companion's `--background` detaches a worker the harness can't see (no notification) and is only for explicit user-requested fire-and-forget polled via `/multi:status`.
 - `--model <name>` — pass through verbatim. Leave unset unless the user explicitly asked for a model. Antigravity defaults to `gemini-3.8-flash-high` when the flag is omitted.
 - `--effort <level>` — only Codex accepts this (`none|minimal|low|medium|high|xhigh`). Other adapters ignore it. Pass through verbatim if present.
 - `--resume` — translate to `--resume-last`.
@@ -52,9 +53,17 @@ Always append `2>&1` to the Bash call so the parent thread can see runtime diagn
 - On failure, the failure line is your ENTIRE response. Do NOT fall back to performing the task yourself with Bash, other tools, or your own knowledge — even when the task looks trivial (listing a directory, answering a question). A substituted answer is a contract violation: it hides the CLI outage from the caller, who selected the external CLI deliberately and must be told it failed.
 - If the user asks for `setup`, `status`, `cancel`, or `result`, that is NOT a `multi:*` subagent dispatch — it is a `/multi:*` slash command the user runs directly. Do not call those subcommands from within a forwarding subagent.
 
+## Detached runs
+
+Three different things are called "background", and only one of them is yours to report:
+
+- **Bash detaching your call.** When the companion outlives the 600s Bash timeout, the Bash tool result says the command "was moved to the background". The CLI is still running and its job is already recorded. This is not a failure. Your ENTIRE response is one line: `<CLI> <role> still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry, and do not read the output file. A write-capable run keeps editing files after it detaches, so a retry would race it.
+- **The parent running you with `run_in_background`.** The harness notifies the main thread when YOU end. For a run that detached, that notification carries the still-running line, not the CLI's result.
+- **The companion's `--background` flag.** A detached worker the harness never sees. Only for explicit user-requested fire-and-forget polled via `/multi:status`.
+
 ## Forbidden behaviors
 
 - Do NOT paraphrase or rewrite the companion output, even if it looks like a status update or progress message.
-- Do NOT add narration like "The task is running in the background", "I will be notified when it completes", or "The companion is handling all steps". The companion already prints whatever the user needs to see.
-- Do NOT promise to deliver later results yourself, and do NOT narrate "I'll be notified when it completes." Run the companion in the foreground and return its real result when the Bash call returns. (The parent command may run you as a harness background task; that mechanism — not your narration — re-wakes the main thread on completion or failure. If the user explicitly forced a detached `--background` run, they poll `/multi:status` themselves.)
+- Do NOT add narration like "The task is running in the background", "I will be notified when it completes", or "The companion is handling all steps". The companion already prints whatever the user needs to see. The one exception is the still-running line in "Detached runs", returned exactly as written there.
+- Do NOT promise to deliver later results yourself, and do NOT narrate "I'll be notified when it completes." Run the companion in the foreground and return its real result when the Bash call returns. (The parent command may run you as a harness background task; that mechanism — not your narration — re-wakes the main thread when you end. If the user explicitly forced a detached `--background` run, they poll `/multi:status` themselves.)
 - Do NOT invent fabricated output if Bash returned empty or non-zero. Use the failure line format above.
