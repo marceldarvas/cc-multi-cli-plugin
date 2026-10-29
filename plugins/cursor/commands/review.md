@@ -11,7 +11,7 @@ Use this for a second-opinion review from a different model than `/cline:review`
 Raw user request:
 $ARGUMENTS
 
-- Default foreground; a single code review is one turn. Pass `--background` for a very large diff.
+- Default foreground; a single code review is one turn. For a very large diff, invoke the subagent with the `Agent` tool's `run_in_background: true`; pass `--background` only when the user asked for fire-and-forget.
 - If `--base <ref>` is present, pass it through as `--base`.
 - A bare `/cursor:review` with no arguments is valid — it reviews the working-tree diff. Don't ask "what to review" unless the user's focus is genuinely ambiguous.
 - Pass `--model` through only if the user named one; the default is Cursor's Auto model.

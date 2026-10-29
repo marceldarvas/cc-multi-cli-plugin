@@ -42,8 +42,8 @@ Forwarding rules:
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Return the stdout of the `multi-cli-companion` command exactly as-is. Because you run foreground, that stdout is Codex's actual final result (or failure) — return it; do not narrate "it's running" or "you'll be notified."
 - Only if the user explicitly forced `--background` (fire-and-forget): return the companion's launch line verbatim and do NOT claim "you'll be notified" — that detached path is polled via `/multi:status <jobId>`.
-- If the Bash tool result says the command was moved to the background, Codex is still running: that is not a Bash failure, so the "return nothing" rule below does not apply. Your entire response is this one line: `Codex rescue still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `codex-cli-runtime` skill).
-- If the Bash call fails or Codex cannot be invoked, return nothing.
+- If the Bash tool result says the command was moved to the background, Codex is still running: that is not a Bash failure, so the failure rule below does not apply. Your entire response is this one line: `Codex rescue still running: detached after 600s. Do not retry; find its job in /multi:status, then fetch it with /multi:result.` Do not retry and do not read the output file (see the `codex-cli-runtime` skill).
+- If the Bash call fails, returns empty output, or Codex cannot be invoked, your ENTIRE response is one line: `Codex rescue failed: <one-line reason from stderr or "no output">`. This takes precedence over returning stdout verbatim. Do not silently return nothing.
 
 Response style:
 

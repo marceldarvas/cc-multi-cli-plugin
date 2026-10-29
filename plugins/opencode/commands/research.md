@@ -11,7 +11,7 @@ Use this to offload external research (library docs, API changes, "what's the cu
 Raw user request:
 $ARGUMENTS
 
-- Default foreground; research is usually a single turn. Pass `--background` for a deep/long investigation.
+- Default foreground; research is usually a single turn. For a deep/long investigation, invoke the subagent with the `Agent` tool's `run_in_background: true`; pass `--background` only when the user asked for fire-and-forget.
 - Pass `--model` through; default is opencode/claude-opus-4-8.
 - If the request has no question, ask what to research.
 

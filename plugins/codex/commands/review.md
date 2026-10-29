@@ -16,7 +16,7 @@ $ARGUMENTS
 Execution:
 
 - Preserve `--wait`/`--background`/`--base`/`--scope` for the forwarded command — the subagent reads them.
-- Default to foreground for small diffs; the subagent escalates to background for large or unclear scope.
+- Default to foreground for small diffs. For a large or unclear scope, invoke the subagent with the `Agent` tool's `run_in_background: true`; pass `--background` only when the user asked for fire-and-forget.
 - If no focus text is given, the subagent reviews the full working-tree diff by default.
 
 Return Codex's review output verbatim.

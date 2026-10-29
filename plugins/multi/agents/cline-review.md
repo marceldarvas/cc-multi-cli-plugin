@@ -40,7 +40,7 @@ Use exactly one `Bash` call, with `timeout: 600000` so the forwarder outlives Cl
 - Cline is read-only by construction. Never pass `--write`.
 - Do NOT pass `--model` — the adapter pins `cline-pass/deepseek-v4.1-flash` automatically.
 - Only include `--base` / focus text when the user's request calls for them (see above); otherwise omit both.
-- Prefer foreground (default). Pass `--background` only if the user explicitly asked for a long/deep investigation.
+- Run in the foreground. Pass `--background` only when the user asked for fire-and-forget (they poll `/multi:status`).
 - Append `2>&1` so runtime diagnostics surface.
 
 ## Returning the result

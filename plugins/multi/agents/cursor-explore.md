@@ -28,7 +28,7 @@ Use exactly one `Bash` call, with `timeout: 600000` so the forwarder outlives th
 - `--read-only` is required (explore never writes files).
 - Do NOT pass `--model` unless the user explicitly specified one — Cursor's Auto model is the default.
 - Cursor does not support `--effort`; ignore it.
-- Prefer foreground; pass `--background` only if the user asked for a broad survey.
+- Run in the foreground. Pass `--background` only when the user asked for fire-and-forget (they poll `/multi:status`).
 - Append `2>&1` so runtime diagnostics surface.
 - Do not chain extra Bash calls (no polling, no `sleep`, no `cat`). The companion prints its full result when it returns.
 

@@ -41,4 +41,4 @@ Safety rules:
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Return the stdout of the `task` command exactly as-is.
-- If the Bash call fails or Codex cannot be invoked, return nothing.
+- If the Bash call fails, returns empty output, or Codex cannot be invoked, your ENTIRE response is one line: `Codex rescue failed: <one-line reason from stderr or "no output">`. This takes precedence over returning stdout verbatim. A command moved to the background is the still-running case above, not a failure. Do not silently return nothing.
